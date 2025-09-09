@@ -147,11 +147,21 @@ class FrontierQueue:
             logger.debug(f"Skipping invalid URL: {page_plan.url}")
             return False
         
-        # Check for duplicates
-        if await self._is_duplicate(normalized_url):
-            self._stats.deduplicated_total += 1
-            logger.debug(f"Deduplicated URL: {normalized_url}")
-            return False
+        # Check for duplicates (under lock to prevent race conditions)
+        async with self._lock:
+            if self._bloom_filter:
+                # First check Bloom filter
+                if normalized_url in self._bloom_filter:
+                    # Possible duplicate, check exact set
+                    if normalized_url in self._seen_urls:
+                        self._stats.deduplicated_total += 1
+                        logger.debug(f"Deduplicated URL: {normalized_url}")
+                        return False
+            else:
+                if normalized_url in self._seen_urls:
+                    self._stats.deduplicated_total += 1
+                    logger.debug(f"Deduplicated URL: {normalized_url}")
+                    return False
         
         # Handle backpressure
         if wait_on_backpressure:
@@ -172,8 +182,11 @@ class FrontierQueue:
             self._counter += 1
             await self._queue.put((-priority.value, self._counter, queue_item))
             
-            # Track URL as seen
-            await self._mark_as_seen(normalized_url)
+            # Track URL as seen (under lock to prevent race conditions)
+            async with self._lock:
+                self._seen_urls.add(normalized_url)
+                if self._bloom_filter:
+                    self._bloom_filter.add(normalized_url)
             
             # Update statistics
             self._stats.enqueued_total += 1
@@ -258,24 +271,6 @@ class FrontierQueue:
         })
         return stats
     
-    async def _is_duplicate(self, normalized_url: str) -> bool:
-        """Check if URL has been seen before."""
-        async with self._lock:
-            if self._bloom_filter:
-                # First check Bloom filter
-                if normalized_url in self._bloom_filter:
-                    # Possible duplicate, check exact set
-                    return normalized_url in self._seen_urls
-                return False
-            else:
-                return normalized_url in self._seen_urls
-    
-    async def _mark_as_seen(self, normalized_url: str):
-        """Mark URL as seen for deduplication."""
-        async with self._lock:
-            self._seen_urls.add(normalized_url)
-            if self._bloom_filter:
-                self._bloom_filter.add(normalized_url)
     
     def _is_backpressure_active(self) -> bool:
         """Check if queue is under backpressure."""

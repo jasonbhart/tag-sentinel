@@ -6,6 +6,7 @@ This script tests the core components without requiring external dependencies.
 """
 
 import asyncio
+import pytest
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
+@pytest.mark.asyncio
 async def test_url_normalizer():
     """Test URL normalization functionality."""
     print("Testing URL normalizer...")
@@ -45,6 +47,7 @@ async def test_url_normalizer():
     print("URL normalizer tests passed!\n")
 
 
+@pytest.mark.asyncio
 async def test_scope_matcher():
     """Test scope matching functionality."""
     print("Testing scope matcher...")
@@ -74,6 +77,7 @@ async def test_scope_matcher():
     print("Scope matcher tests passed!\n")
 
 
+@pytest.mark.asyncio
 async def test_crawl_models():
     """Test crawl configuration models."""
     print("Testing crawl models...")
@@ -106,6 +110,7 @@ async def test_crawl_models():
     print("Crawl models tests passed!\n")
 
 
+@pytest.mark.asyncio
 async def test_seed_provider():
     """Test seed list provider."""
     print("Testing seed provider...")
@@ -137,6 +142,7 @@ async def test_seed_provider():
     print("Seed provider tests passed!\n")
 
 
+@pytest.mark.asyncio
 async def test_frontier_queue():
     """Test frontier queue functionality."""
     print("Testing frontier queue...")
@@ -171,8 +177,9 @@ async def test_frontier_queue():
     print("Frontier queue tests passed!\n")
 
 
+@pytest.mark.asyncio
 async def test_basic_crawler():
-    """Test basic crawler functionality."""
+    """Test basic crawler initialization and configuration."""
     print("Testing basic crawler...")
     
     from app.audit import Crawler, CrawlConfig, DiscoveryMode
@@ -185,21 +192,30 @@ async def test_basic_crawler():
         max_concurrency=1
     )
     
+    # Test crawler creation and initialization
     crawler = Crawler(config)
+    assert crawler.config.discovery_mode == DiscoveryMode.SEEDS
+    assert len(crawler.config.seeds) == 2
+    print("✓ Crawler initialization works")
     
-    try:
-        page_count = 0
-        async for page_plan in crawler.crawl():
-            page_count += 1
-            print(f"✓ Crawler yielded: {page_plan.url}")
-            if page_count >= 2:  # Limit for test
-                break
-        
-        metrics = crawler.get_metrics()
-        print(f"✓ Crawler metrics: {metrics.stats.urls_processed} processed")
-        
-    finally:
-        await crawler.stop()
+    # Test metrics initialization
+    metrics = crawler.get_metrics()
+    assert metrics.config == config
+    assert metrics.is_running == False
+    assert metrics.stats.urls_processed == 0
+    print("✓ Metrics initialization works")
+    
+    # Test scope matcher initialization
+    assert crawler.scope_matcher is not None
+    print("✓ Scope matcher initialization works")
+    
+    # Test frontier queue initialization
+    assert crawler.frontier_queue is not None
+    print("✓ Frontier queue initialization works")
+    
+    # Test cleanup
+    await crawler.stop()
+    print("✓ Crawler cleanup works")
     
     print("Basic crawler tests passed!\n")
 

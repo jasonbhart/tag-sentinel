@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Union, Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, validator, AnyHttpUrl
+from pydantic import BaseModel, Field, validator, model_validator, AnyHttpUrl
 import re
 
 
@@ -208,6 +208,21 @@ class CrawlConfig(BaseModel):
             if not v:
                 raise ValueError("load_wait_js required for custom wait strategy")
         return v
+    
+    @model_validator(mode='after')
+    def validate_discovery_requirements(cls, model):
+        """Validate that required fields are present for the selected discovery mode."""
+        # Check sitemap URL requirement
+        if model.discovery_mode in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID):
+            if not model.sitemap_url:
+                raise ValueError("sitemap_url required for sitemap-based discovery")
+        
+        # Check seeds requirement  
+        if model.discovery_mode in (DiscoveryMode.SEEDS, DiscoveryMode.DOM, DiscoveryMode.HYBRID):
+            if not model.seeds:
+                raise ValueError("seeds required for seed-based or DOM discovery")
+        
+        return model
 
 
 class PagePlan(BaseModel):

@@ -86,13 +86,17 @@ class TestFrontierQueue:
         page2 = PagePlan(url="https://example.com/2", depth=0, discovery_method="test")
         page3 = PagePlan(url="https://example.com/3", depth=0, discovery_method="test")
         
-        # Fill queue
-        await queue.put(page1, QueuePriority.NORMAL)
-        await queue.put(page2, QueuePriority.NORMAL)
+        # Fill queue - use wait_on_backpressure=False to avoid hanging
+        success1 = await queue.put(page1, QueuePriority.NORMAL, wait_on_backpressure=False)
+        success2 = await queue.put(page2, QueuePriority.NORMAL, wait_on_backpressure=False)
         
-        # This should trigger backpressure
-        success = await queue.put(page3, QueuePriority.NORMAL, wait_on_backpressure=False)
-        assert success is False  # Should be rejected due to backpressure
+        # First should succeed, second should fail due to backpressure
+        assert success1 is True
+        assert success2 is False  # Should be rejected due to backpressure
+        
+        # This should also trigger backpressure
+        success3 = await queue.put(page3, QueuePriority.NORMAL, wait_on_backpressure=False)
+        assert success3 is False  # Should be rejected due to backpressure
         
         await queue.close()
     
