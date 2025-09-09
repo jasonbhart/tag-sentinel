@@ -1,0 +1,97 @@
+# Tag Sentinel Detector Configuration
+# This file configures analytics tag detection behavior
+
+# Environment settings
+environment: "production"  # production, staging, development, test
+site_domain: null  # Primary domain being audited (optional)
+
+# Global detector settings
+global_settings:
+  max_processing_time_ms: 5000    # Maximum time per page processing
+  max_events_per_page: 1000       # Maximum events to process per page
+  enable_debug: false             # Enable debug logging
+  enable_external_validation: false # Allow external API calls (non-prod only)
+
+# Google Analytics 4 (GA4) Detection
+ga4:
+  enabled: true
+  
+  # Analytics endpoints to detect
+  endpoints:
+    - pattern: "https://www.google-analytics.com/mp/collect"
+      enabled: true
+    - pattern: "https://region1.google-analytics.com/mp/collect"
+      enabled: true
+    - pattern: "https://*.google-analytics.com/mp/collect"
+      enabled: true
+    - pattern: "https://www.google-analytics.com/g/collect"
+      enabled: true
+  
+  # Measurement Protocol debug validation (non-production only)
+  mp_debug:
+    enabled: false              # Enable MP debug validation
+    timeout_ms: 5000            # Timeout for debug requests
+    max_validation_requests: 10  # Limit validation requests per page
+  
+  # Parameter extraction settings
+  parameter_extraction:
+    extract_client_info: true      # Extract client ID, session info
+    extract_page_info: true       # Extract page title, URL, referrer
+    extract_ecommerce: true       # Extract ecommerce data
+    extract_custom_dimensions: true # Extract custom dimensions/metrics
+    max_parameters: 100           # Maximum parameters to extract
+    sanitize_sensitive: true      # Redact sensitive parameters
+
+# Google Tag Manager (GTM) Detection  
+gtm:
+  enabled: true
+  container_validation: true    # Validate container ID format
+  validate_datalayer: true      # Check dataLayer presence/structure
+  
+  # DataLayer extraction settings
+  datalayer_extraction:
+    check_html_responses: true    # Check HTML for dataLayer
+    check_js_responses: true      # Check JavaScript for dataLayer
+    max_event_extraction: 50     # Limit events extracted for analysis
+    validate_structure: true     # Validate dataLayer structure
+  
+  # Performance warning thresholds
+  performance_thresholds:
+    slow_load_ms: 3000           # Warn if container loads slowly
+    max_container_count: 5       # Warn if too many containers
+
+# Duplicate Event Detection
+duplicates:
+  enabled: true
+  window_ms: 4000              # Time window for duplicate detection
+  similarity_threshold: 0.9     # Similarity threshold (0.0-1.0)
+  hash_algorithm: "md5"        # Algorithm for event canonicalization
+  
+  # Parameters to ignore during duplicate detection
+  ignore_parameters:
+    - "timestamp"
+    - "cb"
+    - "random"
+    - "_"
+
+# Tag Sequencing Analysis
+sequencing:
+  enabled: true
+  timing_tolerance_ms: 100     # Tolerance for sequence timing
+  
+  # Sequencing rules to validate
+  rules:
+    - name: "GTM before GA4"
+      first:
+        vendor: "gtm"
+        pattern: "container_load"
+      second:
+        vendor: "ga4" 
+        pattern: "page_view"
+      max_delay_ms: 2000
+      severity: "warning"
+
+# Environment-specific overrides can be placed in:
+# - config/detectors.development.yaml
+# - config/detectors.staging.yaml
+# - config/detectors.production.yaml
