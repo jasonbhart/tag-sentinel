@@ -1,0 +1,441 @@
+"""Main crawler engine for orchestrating URL discovery and page processing.
+
+This module coordinates all crawler components including input providers,
+scope matching, queue management, and rate limiting to produce PagePlans
+for downstream processing by the browser capture engine.
+"""
+
+import asyncio
+import logging
+import time
+from datetime import datetime
+from typing import List, AsyncIterator, Optional, Dict, Any, Set
+from contextlib import asynccontextmanager
+
+from .models.crawl import CrawlConfig, CrawlMetrics, CrawlStats, PagePlan, DiscoveryMode
+from .utils.scope_matcher import ScopeMatcher, create_scope_matcher_from_config
+from .queue.frontier_queue import FrontierQueue, QueuePriority, QueueClosedError
+from .queue.rate_limiter import PerHostRateLimiter
+from .input.seed_provider import SeedListProvider
+from .input.sitemap_provider import SitemapProvider
+from .input.dom_provider import DomLinkProvider, MockDomLinkProvider
+
+# Import placeholder for browser context - will be replaced when EPIC 2 is implemented
+try:
+    from playwright.async_api import BrowserContext
+except ImportError:
+    BrowserContext = None
+
+
+logger = logging.getLogger(__name__)
+
+
+class CrawlerError(Exception):
+    """Raised when crawler encounters a fatal error."""
+    pass
+
+
+class Crawler:
+    """Main crawler engine for URL discovery and orchestration.
+    
+    The crawler coordinates multiple components to discover and filter URLs
+    according to configured rules, producing PagePlans for downstream processing.
+    
+    Components:
+    - Input providers (seeds, sitemap, DOM)
+    - Scope matcher for URL filtering
+    - Frontier queue with deduplication
+    - Per-host rate limiting
+    - Worker management and coordination
+    """
+    
+    def __init__(
+        self,
+        config: CrawlConfig,
+        browser_context: Optional['BrowserContext'] = None
+    ):
+        """Initialize crawler with configuration.
+        
+        Args:
+            config: Crawl configuration
+            browser_context: Playwright browser context (from EPIC 2)
+        """
+        self.config = config
+        self.browser_context = browser_context
+        
+        # Initialize components
+        self.scope_matcher = create_scope_matcher_from_config(config)
+        self.frontier_queue = FrontierQueue(
+            max_size=max(config.max_pages * 2, 1000),  # Buffer for discovery
+            backpressure_threshold=0.8
+        )
+        self.rate_limiter = PerHostRateLimiter(
+            default_requests_per_second=config.requests_per_second,
+            default_max_concurrent=config.max_concurrent_per_host
+        )
+        
+        # Initialize input providers
+        self._input_providers = self._create_input_providers()
+        
+        # State tracking
+        self._metrics = CrawlMetrics(config=config)
+        self._running = False
+        self._workers: List[asyncio.Task] = []
+        self._discovery_task: Optional[asyncio.Task] = None
+        self._shutdown_event = asyncio.Event()
+        
+        # Processed URLs tracking
+        self._processed_urls: Set[str] = set()
+        self._processing_urls: Set[str] = set()
+        self._lock = asyncio.Lock()
+    
+    def _create_input_providers(self) -> Dict[str, Any]:
+        """Create input providers based on discovery mode."""
+        providers = {}
+        
+        # Always create seed provider if seeds are available
+        if self.config.seeds:
+            providers['seeds'] = SeedListProvider(
+                seeds=[str(url) for url in self.config.seeds]
+            )
+        
+        # Create sitemap provider if needed
+        if (self.config.discovery_mode in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID) 
+            and self.config.sitemap_url):
+            providers['sitemap'] = SitemapProvider(
+                sitemap_url=str(self.config.sitemap_url),
+                max_urls=self.config.max_pages,
+                timeout=self.config.page_timeout
+            )
+        
+        # Create DOM provider if needed
+        if (self.config.discovery_mode in (DiscoveryMode.DOM, DiscoveryMode.HYBRID)):
+            if self.browser_context:
+                providers['dom'] = DomLinkProvider(
+                    browser_context=self.browser_context,
+                    load_wait_strategy=self.config.load_wait_strategy,
+                    load_wait_timeout=self.config.load_wait_timeout,
+                    load_wait_selector=self.config.load_wait_selector,
+                    load_wait_js=self.config.load_wait_js
+                )
+            else:
+                logger.warning("Browser context not available, using mock DOM provider")
+                providers['dom'] = MockDomLinkProvider()
+        
+        return providers
+    
+    async def crawl(self) -> AsyncIterator[PagePlan]:
+        """Execute the crawl and yield discovered PagePlans.
+        
+        Yields:
+            PagePlan objects ready for processing by browser capture engine
+        """
+        if self._running:
+            raise CrawlerError("Crawler is already running")
+        
+        self._running = True
+        self._metrics.stats.start_time = datetime.utcnow()
+        self._metrics.is_running = True
+        
+        logger.info(f"Starting crawl with config: {self.config.discovery_mode}")
+        
+        try:
+            async with self._crawler_context():
+                # Start URL discovery
+                self._discovery_task = asyncio.create_task(self._discover_urls())
+                
+                # Start worker pool
+                await self._start_workers()
+                
+                # Yield PagePlans as they become available
+                async for page_plan in self._process_queue():
+                    if self._should_stop():
+                        break
+                    yield page_plan
+                    
+        except Exception as e:
+            logger.error(f"Crawl failed: {e}")
+            raise CrawlerError(f"Crawl execution failed: {e}")
+        finally:
+            await self._cleanup()
+            self._running = False
+            self._metrics.is_running = False
+            self._metrics.stats.end_time = datetime.utcnow()
+            logger.info(f"Crawl completed: {self._metrics.export_summary()}")
+    
+    @asynccontextmanager
+    async def _crawler_context(self):
+        """Async context manager for crawler resources."""
+        try:
+            # Initialize sitemap provider context if needed
+            if 'sitemap' in self._input_providers:
+                sitemap_provider = self._input_providers['sitemap']
+                await sitemap_provider.__aenter__()
+            
+            yield
+            
+        finally:
+            # Cleanup sitemap provider
+            if 'sitemap' in self._input_providers:
+                sitemap_provider = self._input_providers['sitemap']
+                await sitemap_provider.__aexit__(None, None, None)
+    
+    async def _discover_urls(self):
+        """Background task for URL discovery from all input providers."""
+        try:
+            # Discover from seeds first (highest priority)
+            if 'seeds' in self._input_providers:
+                seed_provider = self._input_providers['seeds']
+                async for page_plan in seed_provider.discover_urls(depth=0):
+                    await self._enqueue_page_plan(page_plan, QueuePriority.HIGH)
+            
+            # Discover from sitemap
+            if 'sitemap' in self._input_providers:
+                sitemap_provider = self._input_providers['sitemap']
+                async for page_plan in sitemap_provider.discover_urls(depth=0):
+                    await self._enqueue_page_plan(page_plan, QueuePriority.NORMAL)
+            
+            # DOM discovery happens during processing (in workers)
+            
+        except Exception as e:
+            logger.error(f"URL discovery failed: {e}")
+        finally:
+            logger.debug("URL discovery completed")
+    
+    async def _enqueue_page_plan(self, page_plan: PagePlan, priority: QueuePriority):
+        """Enqueue a PagePlan if it passes scope checks.
+        
+        Args:
+            page_plan: PagePlan to enqueue
+            priority: Queue priority for the page
+        """
+        # Check scope
+        if not self.scope_matcher.is_in_scope(str(page_plan.url)):
+            self._metrics.stats.urls_skipped += 1
+            logger.debug(f"URL out of scope: {page_plan.url}")
+            return
+        
+        # Check limits
+        if self._metrics.stats.urls_processed >= self.config.max_pages:
+            logger.info(f"Reached max pages limit: {self.config.max_pages}")
+            return
+        
+        # Enqueue
+        success = await self.frontier_queue.put(page_plan, priority)
+        if success:
+            self._metrics.stats.urls_queued += 1
+            self._metrics.queue_size = self.frontier_queue.qsize()
+            logger.debug(f"Enqueued: {page_plan.url}")
+        else:
+            self._metrics.stats.urls_skipped += 1
+    
+    async def _start_workers(self):
+        """Start the worker pool for processing pages."""
+        worker_count = min(self.config.max_concurrency, self.config.max_pages)
+        
+        for i in range(worker_count):
+            worker = asyncio.create_task(self._worker_loop(f"worker-{i}"))
+            self._workers.append(worker)
+        
+        logger.info(f"Started {worker_count} workers")
+    
+    async def _worker_loop(self, worker_name: str):
+        """Main loop for a crawler worker.
+        
+        Args:
+            worker_name: Name of this worker for logging
+        """
+        logger.debug(f"Worker {worker_name} started")
+        
+        while not self._shutdown_event.is_set():
+            try:
+                # Get next page from queue
+                page_plan = await self.frontier_queue.get(timeout=1.0)
+                if page_plan is None:
+                    continue
+                
+                # Process the page
+                await self._process_page(page_plan, worker_name)
+                
+            except QueueClosedError:
+                logger.debug(f"Worker {worker_name} stopping - queue closed")
+                break
+            except Exception as e:
+                logger.error(f"Worker {worker_name} error: {e}")
+        
+        logger.debug(f"Worker {worker_name} stopped")
+    
+    async def _process_page(self, page_plan: PagePlan, worker_name: str):
+        """Process a single page for DOM link discovery.
+        
+        Args:
+            page_plan: PagePlan to process
+            worker_name: Name of processing worker
+        """
+        url = str(page_plan.url)
+        
+        # Check if already processing or processed
+        async with self._lock:
+            if url in self._processing_urls or url in self._processed_urls:
+                return
+            self._processing_urls.add(url)
+        
+        try:
+            # Rate limiting
+            limiter = await self.rate_limiter.acquire(url, timeout=30.0)
+            if not limiter:
+                logger.warning(f"Rate limit timeout for {url}")
+                self._metrics.add_error(url, "rate_limit", "Timeout waiting for rate limit")
+                return
+            
+            try:
+                # DOM link discovery (if enabled)
+                if (self.config.discovery_mode in (DiscoveryMode.DOM, DiscoveryMode.HYBRID)
+                    and 'dom' in self._input_providers):
+                    
+                    dom_provider = self._input_providers['dom']
+                    new_depth = page_plan.depth + 1
+                    
+                    # Check depth limit
+                    if self.config.max_depth is None or new_depth <= self.config.max_depth:
+                        async for discovered_plan in dom_provider.discover_urls_from_page(
+                            url, new_depth, self._processed_urls
+                        ):
+                            await self._enqueue_page_plan(discovered_plan, QueuePriority.LOW)
+                
+                # Record success
+                await self.rate_limiter.record_response(url, 200)
+                self._metrics.stats.urls_processed += 1
+                
+            finally:
+                await limiter.release()
+                
+        except Exception as e:
+            logger.error(f"Error processing page {url}: {e}")
+            self._metrics.add_error(url, "processing_error", str(e))
+            self._metrics.stats.urls_failed += 1
+        finally:
+            # Mark as processed
+            async with self._lock:
+                self._processing_urls.discard(url)
+                self._processed_urls.add(url)
+    
+    async def _process_queue(self) -> AsyncIterator[PagePlan]:
+        """Process the frontier queue and yield PagePlans for browser capture.
+        
+        Yields:
+            PagePlan objects ready for browser processing
+        """
+        while not self._should_stop():
+            try:
+                page_plan = await self.frontier_queue.get(timeout=1.0)
+                if page_plan is None:
+                    # Check if discovery is complete and queue is empty
+                    if (self._discovery_task and self._discovery_task.done() 
+                        and self.frontier_queue.empty()):
+                        break
+                    continue
+                
+                # Update metrics
+                self._metrics.current_url = str(page_plan.url)
+                self._metrics.queue_size = self.frontier_queue.qsize()
+                
+                yield page_plan
+                
+            except QueueClosedError:
+                break
+            except Exception as e:
+                logger.error(f"Error processing queue: {e}")
+    
+    def _should_stop(self) -> bool:
+        """Check if crawler should stop based on limits and conditions."""
+        # Check page limit
+        if self._metrics.stats.urls_processed >= self.config.max_pages:
+            return True
+        
+        # Check shutdown signal
+        if self._shutdown_event.is_set():
+            return True
+        
+        # Check if discovery is done and queue is empty
+        if (self._discovery_task and self._discovery_task.done() 
+            and self.frontier_queue.empty() 
+            and not self._processing_urls):
+            return True
+        
+        return False
+    
+    async def stop(self):
+        """Gracefully stop the crawler."""
+        logger.info("Stopping crawler...")
+        self._shutdown_event.set()
+        
+        # Cancel discovery task
+        if self._discovery_task and not self._discovery_task.done():
+            self._discovery_task.cancel()
+        
+        # Close queue
+        await self.frontier_queue.close()
+        
+        # Wait for workers to finish
+        if self._workers:
+            await asyncio.gather(*self._workers, return_exceptions=True)
+        
+        await self._cleanup()
+    
+    async def _cleanup(self):
+        """Cleanup crawler resources."""
+        # Stop rate limiter
+        await self.rate_limiter.close()
+        
+        # Cancel any remaining tasks
+        if self._discovery_task and not self._discovery_task.done():
+            self._discovery_task.cancel()
+        
+        for worker in self._workers:
+            if not worker.done():
+                worker.cancel()
+        
+        if self._workers:
+            await asyncio.gather(*self._workers, return_exceptions=True)
+        
+        self._workers.clear()
+        logger.info("Crawler cleanup completed")
+    
+    def get_metrics(self) -> CrawlMetrics:
+        """Get current crawler metrics.
+        
+        Returns:
+            Current CrawlMetrics object
+        """
+        # Update queue stats
+        self._metrics.queue_size = self.frontier_queue.qsize()
+        
+        # Update stats from components
+        queue_stats = self.frontier_queue.get_stats()
+        self._metrics.stats.urls_deduplicated = queue_stats.get("deduplicated_total", 0)
+        
+        rate_stats = self.rate_limiter.get_summary_stats()
+        self._metrics.stats.rate_limit_hits = rate_stats.get("total_rate_limited", 0)
+        
+        return self._metrics
+    
+    def get_component_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Get detailed statistics from all components.
+        
+        Returns:
+            Dictionary with stats from all crawler components
+        """
+        stats = {
+            "crawler": self._metrics.export_summary(),
+            "frontier_queue": self.frontier_queue.get_stats(),
+            "rate_limiter": self.rate_limiter.get_summary_stats(),
+            "scope_matcher": self.scope_matcher.get_scope_info()
+        }
+        
+        # Add input provider stats
+        for name, provider in self._input_providers.items():
+            if hasattr(provider, 'get_stats'):
+                stats[f"provider_{name}"] = provider.get_stats()
+        
+        return stats

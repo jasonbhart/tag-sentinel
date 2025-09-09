@@ -1,0 +1,26 @@
+# Core dependencies for Tag Sentinel
+
+# Web framework and async support
+pydantic>=2.0.0,<3.0.0
+aiohttp>=3.8.0,<4.0.0
+aiofiles>=22.0.0,<24.0.0
+
+# Playwright for browser automation (will be used in EPIC 2)
+playwright>=1.40.0,<2.0.0
+
+# Optional: Bloom filter for memory-efficient deduplication
+pybloom-live>=3.0.0,<4.0.0
+
+# Development and testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+
+# Code quality
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# Documentation
+mkdocs>=1.5.0
+mkdocs-material>=9.0.0
