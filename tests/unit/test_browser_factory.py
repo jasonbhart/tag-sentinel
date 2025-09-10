@@ -90,7 +90,10 @@ class TestBrowserFactory:
         """Mock Playwright instance."""
         with patch('app.audit.capture.browser_factory.async_playwright') as mock_pw:
             playwright_mock = AsyncMock()
-            mock_pw.return_value.start.return_value = playwright_mock
+            # Fix: Make async_playwright() return an object with async start() method
+            async_pw_instance = AsyncMock()
+            async_pw_instance.start = AsyncMock(return_value=playwright_mock)
+            mock_pw.return_value = async_pw_instance
             
             # Mock browser types
             browser_mock = AsyncMock()
@@ -100,7 +103,7 @@ class TestBrowserFactory:
             
             # Mock browser methods
             browser_mock.version = "Test Browser 1.0"
-            browser_mock._is_closed.return_value = False
+            browser_mock._is_closed = MagicMock(return_value=False)
             
             # Mock context creation
             context_mock = AsyncMock()

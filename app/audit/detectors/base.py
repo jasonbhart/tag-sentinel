@@ -408,7 +408,14 @@ class DetectorRegistry:
             enabled: Whether the detector is enabled by default
         """
         if name is None:
-            name = getattr(detector_class, 'name', detector_class.__name__)
+            # Try to get name from a temporary instance if it's a property
+            try:
+                # Create a temporary instance to get the actual name
+                temp_instance = detector_class()
+                name = temp_instance.name
+            except Exception:
+                # Fall back to class name if instantiation fails
+                name = detector_class.__name__
         
         self._detectors[name] = detector_class
         self._metadata[name] = metadata or {}
@@ -443,7 +450,8 @@ class DetectorRegistry:
         # Try to create new instance
         try:
             detector_class = self._detectors[name]
-            instance = detector_class(**kwargs)
+            # Pass the registered name to the instance
+            instance = detector_class(name=name, **kwargs)
             self._instances[name] = instance
             return instance
         except Exception as e:
@@ -464,11 +472,41 @@ class DetectorRegistry:
         enabled_names = self._get_enabled_names(config)
         
         for name in enabled_names:
-            detector = self.get_detector(name)
+            # For config overrides, bypass the enabled check in get_detector
+            if config and self.is_enabled(name, config) and not self._enabled.get(name, False):
+                detector = self._create_detector_instance(name)
+            else:
+                detector = self.get_detector(name)
+                
             if detector is not None:
                 detectors.append(detector)
         
         return detectors
+    
+    def _create_detector_instance(self, name: str, **kwargs) -> Optional[Detector]:
+        """Create detector instance without enabled state checks."""
+        if name not in self._detectors:
+            return None
+            
+        # Return cached instance if available
+        if name in self._instances:
+            return self._instances[name]
+        
+        # Check for previous initialization errors
+        if name in self._initialization_errors:
+            return None
+        
+        # Try to create new instance
+        try:
+            detector_class = self._detectors[name]
+            # Pass the registered name to the instance
+            instance = detector_class(name=name, **kwargs)
+            self._instances[name] = instance
+            return instance
+        except Exception as e:
+            # Store error for future reference and debugging
+            self._initialization_errors[name] = str(e)
+            return None
     
     def _get_enabled_names(self, config: Optional[Dict[str, Any]] = None) -> List[str]:
         """Get list of enabled detector names based on registry and config."""

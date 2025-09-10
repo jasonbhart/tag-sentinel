@@ -2,6 +2,7 @@
 """Example of how to test detectors with real website capture data."""
 
 import asyncio
+import pytest
 from datetime import datetime
 
 # You would import your browser capture system here
@@ -11,6 +12,7 @@ from app.audit.detectors import GA4Detector, GTMDetector, DetectContext
 from app.audit.models.capture import PageResult, CaptureStatus
 
 
+@pytest.mark.asyncio
 async def test_real_website():
     """Test detectors with a real website that has GA4/GTM."""
     

@@ -201,7 +201,7 @@ def init_default_patterns():
     
     patterns.add_pattern(
         "gtm_container_id",
-        r"GTM-[A-Z0-9]{7,}",
+        r"GTM-[A-Z0-9]{6,}",
         0,
         "GTM Container ID format", 
         "gtm"
@@ -325,6 +325,22 @@ def extract_container_id(url: str) -> Optional[str]:
     Returns:
         Container ID if found
     """
+    from urllib.parse import urlparse, parse_qs
+    
+    # First try to extract from URL parameters (for gtm.js URLs)
+    try:
+        parsed = urlparse(url)
+        if parsed.query:
+            params = parse_qs(parsed.query)
+            if 'id' in params:
+                container_id = params['id'][0]
+                # Validate it matches the GTM container ID pattern
+                if patterns.match("gtm_container_id", container_id):
+                    return container_id
+    except Exception:
+        pass
+    
+    # Fall back to searching for container ID in the full URL
     match = patterns.search("gtm_container_id", url)
     return match.group(0) if match else None
 

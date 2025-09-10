@@ -171,7 +171,7 @@ class TestMPDebugValidation:
         
         # Check that the call was made to the debug endpoint
         call_args = mock_post.call_args
-        assert "debug/mp/collect" in call_args[1]["url"]
+        assert "debug/mp/collect" in call_args[0][0]  # First positional argument is the URL
     
     @pytest.mark.asyncio
     async def test_mp_debug_validation_errors(self, ga4_page_result, non_production_context):

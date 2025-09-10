@@ -64,7 +64,7 @@ class EventCanonicalizer:
             Canonical dict representation
         """
         canonical = {
-            "vendor": event.vendor.value,
+            "vendor": event.vendor if isinstance(event.vendor, str) else event.vendor.value,
             "name": event.name,
             "category": event.category,
             "id": event.id,
@@ -221,9 +221,9 @@ class DuplicateGroup:
             "status_distribution": dict(self.status_counts),
             "representative_event": {
                 "name": self.representative_event.name,
-                "vendor": self.representative_event.vendor.value,
+                "vendor": self.representative_event.vendor if isinstance(self.representative_event.vendor, str) else self.representative_event.vendor.value,
                 "id": self.representative_event.id,
-                "confidence": self.representative_event.confidence.value
+                "confidence": self.representative_event.confidence if isinstance(self.representative_event.confidence, str) else self.representative_event.confidence.value
             }
         }
 

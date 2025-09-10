@@ -23,8 +23,8 @@ from app.audit.models.capture import PageResult, CaptureStatus
 class TestDetector(BaseDetector):
     """Test detector implementation for testing."""
     
-    def __init__(self):
-        super().__init__("TestDetector", "1.0.0")
+    def __init__(self, name: str = "TestDetector", version: str = "1.0.0"):
+        super().__init__(name, version)
     
     @property
     def supported_vendors(self) -> Set[Vendor]:

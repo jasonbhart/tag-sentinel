@@ -82,8 +82,9 @@ class GA4Detector(BaseDetector, ResilientDetector):
             with self.error_context("analysis_notes", page_url=page.url):
                 self._add_analysis_notes(result, page.url, ga4_requests)
             
-            # Run MP debug validation if enabled and not in production
+            # Run MP debug validation if enabled, external validation is allowed, and not in production
             if (not ctx.is_production and 
+                ctx.enable_external_validation and
                 ctx.config.get("ga4", {}).get("mp_debug", {}).get("enabled", False)):
                 with self.error_context("mp_debug_validation", page_url=page.url):
                     await self._validate_with_mp_debug_safe(result, ga4_requests, ctx)
@@ -671,12 +672,13 @@ class GA4Detector(BaseDetector, ResilientDetector):
         Returns:
             Endpoint classification
         """
-        if match_url_pattern(url, "ga4_mp_collect"):
+        # Check regional endpoints first (more specific)
+        if match_url_pattern(url, "ga4_regional_endpoint"):
+            return "regional_mp"
+        elif match_url_pattern(url, "ga4_mp_collect"):
             return "measurement_protocol"
         elif match_url_pattern(url, "ga4_g_collect"):
             return "gtag_collect"
-        elif match_url_pattern(url, "ga4_regional_endpoint"):
-            return "regional_mp"
         else:
             return "unknown"
     

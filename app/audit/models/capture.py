@@ -197,11 +197,14 @@ class RequestLog(BaseModel):
     @property
     def is_successful(self) -> bool:
         """Check if request was successful."""
-        return (
-            self.status == RequestStatus.SUCCESS and
-            self.status_code is not None and
-            200 <= self.status_code < 400
-        )
+        # If we have status code information, use it to determine success
+        if self.status_code is not None:
+            return (
+                self.status == RequestStatus.SUCCESS and
+                200 <= self.status_code < 400
+            )
+        # Otherwise, just check if the request finished successfully
+        return self.status == RequestStatus.SUCCESS
 
 
 class CookieRecord(BaseModel):

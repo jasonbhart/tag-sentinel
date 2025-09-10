@@ -375,7 +375,7 @@ class TestDuplicateAnalyzer:
         assert len(result.notes) > 0
         
         # Should have info note about no events
-        info_notes = [note for note in result.notes if note.severity.value == "info"]
+        info_notes = [note for note in result.notes if note.severity == "info"]
         assert len(info_notes) > 0
 
 

@@ -2,6 +2,7 @@
 """Example script to test the GA4 & GTM detectors with sample data."""
 
 import asyncio
+import pytest
 from datetime import datetime
 
 from app.audit.detectors import (
@@ -23,6 +24,7 @@ from app.audit.models.capture import (
 )
 
 
+@pytest.mark.asyncio
 async def test_ga4_detection():
     """Test GA4 detector with sample requests."""
     print("🔍 Testing GA4 Detector...")
@@ -170,6 +172,7 @@ def test_duplicate_detection():
         print(f"   📝 {note.severity}: {note.message}")
 
 
+@pytest.mark.asyncio
 async def test_full_pipeline():
     """Test complete detector pipeline."""
     print("\n🚀 Testing Full Detection Pipeline...")
