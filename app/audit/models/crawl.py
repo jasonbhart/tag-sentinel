@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Union, Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, validator, model_validator, AnyHttpUrl
+from pydantic import BaseModel, Field, field_validator, model_validator, AnyHttpUrl
 import re
 
 
@@ -167,7 +167,8 @@ class CrawlConfig(BaseModel):
         description="Additional HTTP headers to send with requests"
     )
     
-    @validator('include_patterns', 'exclude_patterns')
+    @field_validator('include_patterns', 'exclude_patterns')
+    @classmethod
     def validate_regex_patterns(cls, v):
         """Validate that regex patterns compile correctly."""
         for pattern in v:
@@ -177,37 +178,37 @@ class CrawlConfig(BaseModel):
                 raise ValueError(f"Invalid regex pattern '{pattern}': {e}")
         return v
     
-    @validator('sitemap_url')
-    def validate_sitemap_url(cls, v, values):
+    @model_validator(mode='after')
+    def validate_sitemap_url(self):
         """Validate sitemap URL when discovery mode requires it."""
-        if values.get('discovery_mode') in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID):
-            if not v:
+        if self.discovery_mode in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID):
+            if not self.sitemap_url:
                 raise ValueError("sitemap_url required for sitemap-based discovery")
-        return v
+        return self
     
-    @validator('seeds')
-    def validate_seeds(cls, v, values):
+    @model_validator(mode='after')
+    def validate_seeds(self):
         """Validate that seeds are provided when required."""
-        if values.get('discovery_mode') in (DiscoveryMode.SEEDS, DiscoveryMode.DOM, DiscoveryMode.HYBRID):
-            if not v:
+        if self.discovery_mode in (DiscoveryMode.SEEDS, DiscoveryMode.DOM, DiscoveryMode.HYBRID):
+            if not self.seeds:
                 raise ValueError("seeds required for seed-based or DOM discovery")
-        return v
+        return self
     
-    @validator('load_wait_selector')
-    def validate_load_wait_selector(cls, v, values):
+    @model_validator(mode='after')
+    def validate_load_wait_selector(self):
         """Validate selector when using selector wait strategy."""
-        if values.get('load_wait_strategy') == LoadWaitStrategy.SELECTOR:
-            if not v:
+        if self.load_wait_strategy == LoadWaitStrategy.SELECTOR:
+            if not self.load_wait_selector:
                 raise ValueError("load_wait_selector required for selector wait strategy")
-        return v
+        return self
     
-    @validator('load_wait_js')
-    def validate_load_wait_js(cls, v, values):
+    @model_validator(mode='after')
+    def validate_load_wait_js(self):
         """Validate JavaScript when using custom wait strategy."""
-        if values.get('load_wait_strategy') == LoadWaitStrategy.CUSTOM:
-            if not v:
+        if self.load_wait_strategy == LoadWaitStrategy.CUSTOM:
+            if not self.load_wait_js:
                 raise ValueError("load_wait_js required for custom wait strategy")
-        return v
+        return self
     
     @model_validator(mode='after')
     def validate_discovery_requirements(cls, model):

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, validator, AnyHttpUrl
+from pydantic import BaseModel, Field, field_validator, AnyHttpUrl
 
 
 class RequestStatus(str, Enum):
@@ -171,7 +171,8 @@ class RequestLog(BaseModel):
         description="Remote server IP address"
     )
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_url(cls, v):
         """Validate URL format."""
         try:
@@ -430,7 +431,8 @@ class PageResult(BaseModel):
         description="Additional performance and timing metrics"
     )
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_url(cls, v):
         """Validate URL format."""
         try:

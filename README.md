@@ -57,10 +57,10 @@ Tag Sentinel is built with a modular architecture designed for scalability and e
    pip install -r requirements.txt
    ```
 
-3. **Install Playwright browsers** (for EPIC 2+)
+3. **Install Playwright browsers** (for browser capture)
 
    ```bash
-   playwright install
+   python -m playwright install
    ```
 
 ### Running Tests
@@ -79,38 +79,82 @@ pytest tests/integration/ -v
 pytest tests/ --cov=app --cov-report=html
 ```
 
-## 📦 Current Implementation Status
+## 🚀 Getting Started
 
-### ✅ EPIC 1: Crawl & Page Selection (COMPLETE)
+The quickest way to try Tag Sentinel is to capture a page in a real browser and print a short summary.
 
-**Goal**: Discover and select pages to audit with safe concurrency.
+```python
+# save as quick_start.py
+import asyncio
+from app.audit.capture.engine import create_capture_engine
 
-**Implemented Components**:
+async def main():
+    engine = create_capture_engine(headless=True)
+    async with engine.session():
+        result = await engine.capture_page("https://example.com")
+        print({
+            "url": result.url,
+            "status": str(result.capture_status),
+            "requests": len(result.network_requests or []),
+            "console": len(result.console_logs or []),
+        })
 
-- **URL Normalization**: RFC-compliant URL canonicalization with edge case handling
-- **Scope Matching**: Regex-based include/exclude patterns with same-site filtering
-- **Frontier Queue**: Priority queue with deduplication and backpressure handling
-- **Rate Limiting**: Per-host token bucket with exponential backoff
-- **Input Providers**: Seeds, sitemap XML, and DOM link discovery interfaces
-- **Main Crawler**: Orchestrated crawling engine with worker management
-- **Configuration Models**: Validated Pydantic models with comprehensive validation
+asyncio.run(main())
+```
 
-**Test Coverage**: 35/35 tests passing (29 unit + 6 integration)
+Run it:
 
 ```bash
-# Example usage of EPIC 1 components
-python -c "
-from app.audit.models.crawl import CrawlConfig, DiscoveryMode
-from app.audit.crawler import Crawler
+python quick_start.py
+```
 
-config = CrawlConfig(
-    discovery_mode=DiscoveryMode.SEEDS,
-    seeds=['https://example.com'],
-    max_pages=10
-)
-crawler = Crawler(config)
-# Ready for EPIC 2 integration
-"
+## 🔧 Usage Examples
+
+- Capture a page and run detectors (GA4/GTM):
+
+```python
+import asyncio
+from app.audit.capture.engine import create_capture_engine
+from app.audit.detectors import GA4Detector, GTMDetector, DetectContext
+
+async def main():
+    engine = create_capture_engine(headless=True)
+    async with engine.session():
+        page_result = await engine.capture_page("https://example.com")
+
+        ctx = DetectContext(environment="development", is_production=False)
+        ga4_result = await GA4Detector().detect(page_result, ctx)
+        gtm_result = GTMDetector().detect(page_result, ctx)
+
+        print("GA4 events:", len(ga4_result.events))
+        print("GTM events:", len(gtm_result.events))
+
+asyncio.run(main())
+```
+
+- Capture and validate the page dataLayer with schema support:
+
+```python
+import asyncio
+from app.audit.capture.browser_factory import create_default_factory
+from app.audit.datalayer.service import DataLayerService
+
+async def main():
+    factory = create_default_factory()
+    await factory.start()
+    try:
+        async with factory.page() as page:
+            await page.goto("https://example.com", timeout=30000)
+
+            service = DataLayerService()  # configure schema via service.config if needed
+            dl_result = await service.capture_and_validate(page, "https://example.com")
+
+            print("dataLayer found:", dl_result.snapshot.exists)
+            print("validation issues:", len(dl_result.issues))
+    finally:
+        await factory.stop()
+
+asyncio.run(main())
 ```
 
 ## 🛠️ Development
@@ -161,12 +205,6 @@ pytest tests/integration/ -v -s
 ```bash
 # Type checking (when implemented)
 mypy app/
-
-# Linting (when implemented)
-flake8 app/
-
-# Code formatting (when implemented)
-black app/
 ```
 
 ## 🎯 Design Principles
@@ -202,6 +240,9 @@ sites:
       ga4_measurement_id: "G-XXXXXXXXXX"
       gtm_container_id: "GTM-XXXXXXX"
 ```
+
+- Detector configuration lives in `config/detectors.yaml` and controls GA4/GTM detection, MP debug, duplicate windows, and sequencing rules.
+- Data Layer validation can be enabled programmatically via `DataLayerService` (schema paths in JSON or YAML files are supported).
 
 ## 🤝 Contributing
 

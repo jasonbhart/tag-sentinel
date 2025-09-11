@@ -1,6 +1,6 @@
 # Tag Sentinel Tests
 
-This directory contains the test suite for Tag Sentinel's EPIC 1 implementation.
+This directory contains the test suite for Tag Sentinel.
 
 ## Test Structure
 
@@ -16,8 +16,7 @@ tests/
 │   ├── test_models.py
 │   └── test_frontier_queue.py
 ├── integration/            # Integration tests for complete workflows
-│   ├── __init__.py
-│   └── test_epic1_integration.py
+│   └── __init__.py
 └── fixtures/               # Test data and utilities
     └── __init__.py
 ```
@@ -115,14 +114,14 @@ async def test_async_function():
 
 ## Test Coverage
 
-Current test coverage focuses on EPIC 1 components:
-- ✅ URL Normalization (`app.audit.utils.url_normalizer`)
-- ✅ Scope Matching (`app.audit.utils.scope_matcher`)
-- ✅ Data Models (`app.audit.models.crawl`)
-- ✅ Frontier Queue (`app.audit.queue.frontier_queue`)
-- ✅ Rate Limiting (`app.audit.queue.rate_limiter`)
-- ✅ Input Providers (`app.audit.input.*`)
-- ✅ Main Crawler (`app.audit.crawler`)
+Current test coverage includes core crawling, capture, detectors, and data layer modules:
+- ✅ URL normalization and scope matching (`app.audit.utils.*`)
+- ✅ Crawl configuration and models (`app.audit.models.crawl`)
+- ✅ Frontier queue and rate limiter (`app.audit.queue.*`)
+- ✅ Input providers (seeds, sitemap, DOM) (`app.audit.input.*`)
+- ✅ Capture engine and observers (`app.audit.capture.*`)
+- ✅ Detectors (GA4, GTM, duplicates, sequencing) (`app.audit.detectors.*`)
+- ✅ Data layer service and validation (`app.audit.datalayer.*`)
 
 ## Fixtures
 
