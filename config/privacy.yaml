@@ -1,0 +1,241 @@
+# Tag Sentinel Privacy & Consent Configuration
+# This file configures privacy testing, GPC simulation, and consent management
+
+# Privacy testing settings
+privacy:
+  enabled: true
+  
+  # Global Privacy Control (GPC) simulation
+  gpc:
+    enabled: true
+    header: "Sec-GPC: 1"
+    simulate_javascript_api: true  # Simulate navigator.globalPrivacyControl
+    
+  # Do Not Track (DNT) legacy support
+  dnt:
+    enabled: false  # Disabled by default, legacy support
+    header: "DNT: 1"
+    
+  # Consent Management Platform interactions
+  cmp:
+    enabled: false  # Disabled by default, requires site-specific configuration
+    
+    # Common CMP selectors (can be overridden per environment)
+    selectors:
+      # OneTrust selectors
+      onetrust_accept_all: "#onetrust-accept-btn-handler"
+      onetrust_reject_all: "#onetrust-reject-all-handler"
+      onetrust_settings: "#onetrust-pc-btn-handler"
+      
+      # Cookiebot selectors
+      cookiebot_accept_all: "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
+      cookiebot_reject_all: "#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll"
+      
+      # Generic selectors
+      accept_all: "[data-testid='accept-all'], [data-cy='accept-all'], .accept-all"
+      reject_all: "[data-testid='reject-all'], [data-cy='reject-all'], .reject-all"
+      cookie_settings: "[data-testid='cookie-settings'], [data-cy='cookie-settings']"
+    
+    # Interaction settings
+    wait_for_modal_ms: 3000        # Wait for CMP modal to appear
+    wait_after_click_ms: 2000      # Wait after clicking CMP buttons
+    max_interaction_attempts: 3    # Max attempts for CMP interactions
+    screenshot_interactions: true  # Capture screenshots of CMP interactions
+    
+  # Cookie policy compliance requirements
+  policies:
+    # Security requirements
+    secure_required: true          # Require Secure flag on HTTPS sites
+    same_site_default: "Lax"      # Default SameSite requirement
+    http_only_sessions: true      # Require HttpOnly for session cookies
+    
+    # Privacy requirements  
+    third_party_limit: 10         # Warning threshold for third-party cookies
+    analytics_consent_required: true  # Analytics cookies require consent
+    
+    # Domain scope validation
+    validate_domain_scope: true   # Validate cookie domain scope
+    allow_subdomain_cookies: true # Allow cookies for subdomains
+    
+# Privacy testing scenarios
+scenarios:
+  - id: "baseline"
+    name: "No Privacy Signals" 
+    description: "Baseline scenario with no privacy signals or consent interactions"
+    enabled: true
+    request_headers: {}
+    steps: []
+    
+  - id: "gpc_on"
+    name: "GPC Enabled"
+    description: "Global Privacy Control signal enabled"
+    enabled: true
+    request_headers:
+      "Sec-GPC": "1"
+    steps: []
+    expected_cookie_reduction: 30.0  # Expected 30% reduction
+    
+  - id: "dnt_on" 
+    name: "DNT Enabled"
+    description: "Do Not Track signal enabled (legacy)"
+    enabled: false  # Disabled by default
+    request_headers:
+      "DNT": "1"
+    steps: []
+    expected_cookie_reduction: 10.0  # Expected 10% reduction
+    
+  - id: "cmp_reject_all"
+    name: "CMP Reject All"
+    description: "Consent Management Platform - Reject All cookies"
+    enabled: false  # Requires CMP configuration
+    request_headers: {}
+    steps:
+      - type: "wait_for_selector"
+        selector: ".cmp-modal, #onetrust-banner-sdk, #CybotCookiebotDialog"
+        timeout_ms: 5000
+      - type: "click"
+        selector: "reject_all"  # References selectors above
+        wait_after_ms: 2000
+      - type: "wait_for_network_idle"
+        timeout_ms: 3000
+    expected_cookie_reduction: 70.0  # Expected 70% reduction
+    
+  - id: "cmp_accept_all"
+    name: "CMP Accept All" 
+    description: "Consent Management Platform - Accept All cookies"
+    enabled: false  # Requires CMP configuration
+    request_headers: {}
+    steps:
+      - type: "wait_for_selector"
+        selector: ".cmp-modal, #onetrust-banner-sdk, #CybotCookiebotDialog"
+        timeout_ms: 5000
+      - type: "click"
+        selector: "accept_all"  # References selectors above
+        wait_after_ms: 2000
+      - type: "wait_for_network_idle" 
+        timeout_ms: 3000
+    expected_cookie_reduction: -10.0  # May increase cookies
+
+# Cookie classification settings
+classification:
+  # Essential cookie patterns (regex)
+  essential_patterns:
+    - "^session.*"
+    - "^JSESSIONID$"
+    - "^PHPSESSID$" 
+    - "^ASP\\.NET_SessionId$"
+    - "^csrf.*"
+    - "^csrftoken$"
+    - "^authenticity_token$"
+    - "^auth.*"
+    - "^login.*"
+    - "^security.*"
+    - "^consent.*"
+    - "^cookie_consent.*"
+    
+  # Analytics/tracking cookie patterns (regex)
+  analytics_patterns:
+    - "^_ga.*"
+    - "^_gid$"
+    - "^_gat.*"
+    - "^__utm.*"
+    - "^_fbp$"
+    - "^_fbc$"
+    - "^mp_.*"
+    - "^_hjid$"
+    - "^_hjSessionUser_.*"
+    - "^_hjSession_.*"
+    
+  # Known analytics domains
+  analytics_domains:
+    - "google-analytics.com"
+    - "googletagmanager.com" 
+    - "google.com"
+    - "doubleclick.net"
+    - "facebook.com"
+    - "facebook.net"
+    - "connect.facebook.net"
+    - "hotjar.com"
+    - "hotjar.io"
+    - "mixpanel.com"
+    - "segment.com" 
+    - "fullstory.com"
+    - "amplitude.com"
+    
+# Policy rules configuration
+policy_rules:
+  # Secure flag requirements
+  - id: "secure_flag_https"
+    name: "Secure Flag Required on HTTPS"
+    description: "Cookies on HTTPS sites should have Secure flag"
+    severity: "high"
+    condition: "site_protocol == 'https' and not cookie.secure"
+    attribute: "secure"
+    expected: "true"
+    remediation: "Add Secure flag to cookies on HTTPS sites"
+    
+  # SameSite requirements  
+  - id: "same_site_required"
+    name: "SameSite Attribute Required"
+    description: "Cookies should have SameSite attribute set"
+    severity: "medium"
+    condition: "not cookie.same_site"
+    attribute: "same_site"
+    expected: "Lax"
+    remediation: "Set SameSite=Lax for most cookies"
+    
+  # HttpOnly for session cookies
+  - id: "http_only_sessions"
+    name: "HttpOnly Required for Session Cookies" 
+    description: "Session cookies should have HttpOnly flag"
+    severity: "high"
+    condition: "cookie.is_session and cookie.name matches 'session.*' and not cookie.http_only"
+    attribute: "http_only"
+    expected: "true"
+    remediation: "Add HttpOnly flag to session cookies"
+    
+  # Third-party analytics cookies in privacy scenarios
+  - id: "analytics_gpc_compliance"
+    name: "Analytics Cookies Should Respect GPC"
+    description: "Analytics cookies should not be present when GPC is enabled"
+    severity: "critical"
+    condition: "scenario == 'gpc_on' and cookie.is_analytics and not cookie.essential"
+    attribute: "presence"
+    expected: "absent"
+    remediation: "Remove or block analytics cookies when GPC signal is present"
+    
+  - id: "analytics_consent_compliance"  
+    name: "Analytics Cookies Should Respect Consent"
+    description: "Analytics cookies should not be present when consent is rejected"
+    severity: "critical"
+    condition: "scenario == 'cmp_reject_all' and cookie.is_analytics and not cookie.essential"
+    attribute: "presence" 
+    expected: "absent"
+    remediation: "Remove analytics cookies when user rejects consent"
+
+# Environment-specific overrides
+# These settings can be overridden in:
+# - config/privacy.development.yaml
+# - config/privacy.staging.yaml  
+# - config/privacy.production.yaml
+
+# Development environment defaults
+development:
+  privacy:
+    gpc:
+      enabled: true
+    cmp:
+      enabled: false  # Usually disabled in dev
+  policies:
+    secure_required: false  # HTTP allowed in dev
+    
+# Production environment defaults  
+production:
+  privacy:
+    gpc:
+      enabled: true
+    cmp:
+      enabled: true   # Usually enabled in prod
+  policies:
+    secure_required: true   # HTTPS required in prod
+    analytics_consent_required: true

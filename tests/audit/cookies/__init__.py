@@ -1,0 +1,1 @@
+"""Unit tests for the cookies audit module."""
