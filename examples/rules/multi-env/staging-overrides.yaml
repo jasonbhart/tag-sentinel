@@ -1,0 +1,47 @@
+version: "0.1"
+meta:
+  name: "Staging Environment Overrides"
+  description: "Staging-specific rule overrides and additional rules"
+
+defaults:
+  severity: "info"  # More lenient in staging
+
+rules:
+  # Override the performance rule for staging
+  - id: performance-timing
+    name: "Staging page load performance check"
+    description: "More lenient performance check for staging environment"
+    severity: info
+    applies_to:
+      environments: ["staging"]
+      url_include: [".*"]
+    check:
+      type: expression
+      expression: "page.load_time_ms < 5000"  # More lenient timing
+    tags: ["performance", "staging"]
+
+  # Add staging-specific rule
+  - id: staging-debug-mode
+    name: "Debug mode indicators"
+    description: "Check for debug mode indicators in staging"
+    severity: info
+    applies_to:
+      environments: ["staging"]
+    check:
+      type: request_present
+      url_pattern: ".*debug=true.*"
+      min_count: 0
+      max_count: 0
+    tags: ["debug", "staging"]
+
+  # Add development-specific rule
+  - id: dev-console-warnings
+    name: "Development console warnings"
+    description: "Allow console warnings in development"
+    severity: info
+    applies_to:
+      environments: ["development"]
+    check:
+      type: expression
+      expression: "console.warnings.length < 10"
+    tags: ["console", "development"]

@@ -1,0 +1,62 @@
+version: "0.1"
+meta:
+  name: "Base Analytics Rules"
+  description: "Base rule configuration for all environments"
+  author: "Tag Sentinel Team"
+
+defaults:
+  severity: "warning"
+  enabled: true
+
+environments:
+  production:
+    ga4_measurement_id: "${env.PROD_GA4_ID}"
+    gtm_container_id: "${env.PROD_GTM_ID}"
+    strict_mode: true
+  staging:
+    ga4_measurement_id: "${env.STAGING_GA4_ID}"
+    gtm_container_id: "${env.STAGING_GTM_ID}"
+    strict_mode: false
+  development:
+    ga4_measurement_id: "G-DEV123456"
+    gtm_container_id: "GTM-DEV123"
+    strict_mode: false
+
+rules:
+  - id: ga4-pageview-present
+    name: "GA4 page_view event present"
+    description: "Ensure GA4 page_view events are fired on all pages"
+    severity: critical
+    applies_to:
+      environments: ["production", "staging"]
+      url_include: [".*"]
+    check:
+      type: request_present
+      vendor: ga4
+      min_count: 1
+      config:
+        event_name: page_view
+    tags: ["analytics", "ga4", "core"]
+
+  - id: gtm-container-loaded
+    name: "GTM container script loaded"
+    description: "Verify GTM container script is present"
+    severity: critical
+    applies_to:
+      environments: ["production", "staging", "development"]
+    check:
+      type: script_present
+      url_pattern: "https://www\\.googletagmanager\\.com/gtm\\.js\\?id=GTM-"
+    tags: ["gtm", "core"]
+
+  - id: performance-timing
+    name: "Page load performance check"
+    description: "Ensure page loads within acceptable time limits"
+    severity: warning
+    applies_to:
+      environments: ["production"]
+      url_include: [".*"]
+    check:
+      type: expression
+      expression: "page.load_time_ms < 3000"
+    tags: ["performance"]

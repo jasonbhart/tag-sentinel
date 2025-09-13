@@ -1,0 +1,79 @@
+version: '0.1'
+meta:
+  name: Example Analytics Rules
+  description: Example rule configuration for analytics auditing
+  author: Tag Sentinel
+  created: '2025-01-01'
+defaults:
+  severity: warning
+  enabled: true
+  applies_to:
+    environments:
+    - production
+environments:
+  production:
+    ga4_measurement_id: G-XXXXXXXXXX
+    gtm_container_id: GTM-XXXXXXX
+  staging:
+    ga4_measurement_id: G-YYYYYYYYYY
+    gtm_container_id: GTM-YYYYYYY
+rules:
+- id: ga4-pageview-present
+  name: GA4 page_view event present
+  description: Ensure GA4 page_view events are fired on all pages
+  severity: critical
+  applies_to:
+    environments:
+    - production
+    - staging
+    url_include:
+    - .*
+  check:
+    type: request_present
+    vendor: ga4
+    min_count: 1
+    config:
+      event_name: page_view
+  tags:
+  - analytics
+  - ga4
+  - core
+- id: gtm-container-loaded
+  name: GTM container script loaded
+  description: Verify GTM container script is present
+  severity: critical
+  check:
+    type: script_present
+    url_pattern: https://www\.googletagmanager\.com/gtm\.js\?id=GTM-
+  tags:
+  - gtm
+  - core
+- id: no-duplicate-pageviews
+  name: No duplicate page_view events
+  description: Ensure page_view events are not duplicated within 5 seconds
+  severity: warning
+  check:
+    type: duplicate_requests
+    vendor: ga4
+    max_count: 1
+    time_window_ms: 5000
+    config:
+      group_by:
+      - event_name
+      event_name: page_view
+  tags:
+  - analytics
+  - ga4
+  - quality
+alerts:
+  enabled: true
+  channels:
+  - type: webhook
+    webhook_url: https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK
+    min_severity: critical
+    throttle_minutes: 30
+  - type: email
+    email_recipients:
+    - alerts@example.com
+    min_severity: warning
+    throttle_minutes: 60

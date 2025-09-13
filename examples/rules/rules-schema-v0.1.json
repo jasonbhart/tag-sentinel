@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://tag-sentinel.dev/schemas/rules/v0.1.json",
+  "title": "Tag Sentinel Rules Configuration",
+  "description": "Schema for Tag Sentinel YAML rule configuration files",
+  "type": "object",
+  "required": [
+    "version",
+    "rules"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "0.1",
+      "description": "Schema version identifier"
+    },
+    "meta": {
+      "type": "object",
+      "description": "Metadata about the rule configuration",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for this rule set"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the rule set purpose"
+        },
+        "author": {
+          "type": "string",
+          "description": "Author of the rule set"
+        },
+        "created": {
+          "type": "string",
+          "format": "date",
+          "description": "Creation date (YYYY-MM-DD)"
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default values applied to all rules",
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "default": "warning",
+          "description": "Default severity level for rules"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether rules are enabled by default"
+        },
+        "applies_to": {
+          "$ref": "#/$defs/applies_to",
+          "description": "Default scoping for all rules"
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "description": "Environment-specific configuration values",
+      "patternProperties": {
+        "^[a-zA-Z][a-zA-Z0-9_-]*$": {
+          "type": "object",
+          "description": "Environment configuration",
+          "additionalProperties": true
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "description": "List of rule definitions",
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "description": "Alert configuration",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether alerts are enabled globally"
+        },
+        "channels": {
+          "type": "array",
+          "description": "Alert notification channels",
+          "items": {
+            "$ref": "#/$defs/alert_channel"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "applies_to": {
+      "type": "object",
+      "description": "Rule scoping configuration",
+      "additionalProperties": false,
+      "properties": {
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Environment names where rule applies"
+        },
+        "scenario_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Scenario IDs where rule applies"
+        },
+        "url_include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "URL regex patterns to include"
+        },
+        "url_exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "URL regex patterns to exclude"
+        },
+        "vendors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Vendor/tag types to include"
+        }
+      }
+    },
+    "check_config": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "request_present",
+            "script_present",
+            "duplicate_requests",
+            "relative_order",
+            "cookie_policy",
+            "expression"
+          ],
+          "description": "Type of check to perform"
+        },
+        "vendor": {
+          "type": "string",
+          "description": "Vendor/tag type (e.g., 'ga4', 'gtm')"
+        },
+        "url_pattern": {
+          "type": "string",
+          "description": "URL regex pattern to match"
+        },
+        "min_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum required count"
+        },
+        "max_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum allowed count"
+        },
+        "time_window_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Time window in milliseconds"
+        },
+        "expression": {
+          "type": "string",
+          "description": "Expression to evaluate"
+        },
+        "config": {
+          "type": "object",
+          "description": "Additional check-specific configuration"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "request_present"
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "vendor"
+                ]
+              },
+              {
+                "required": [
+                  "url_pattern"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "script_present"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "url_pattern"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "duplicate_requests"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "max_count": {
+                "minimum": 1
+              },
+              "time_window_ms": {
+                "minimum": 100
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "expression"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expression"
+            ]
+          }
+        }
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "check"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+          "description": "Unique rule identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable rule name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed rule description"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "description": "Rule severity level"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether rule is enabled"
+        },
+        "applies_to": {
+          "$ref": "#/$defs/applies_to",
+          "description": "Rule scoping configuration"
+        },
+        "check": {
+          "$ref": "#/$defs/check_config",
+          "description": "Check configuration"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Rule tags for organization"
+        }
+      }
+    },
+    "alert_channel": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "email",
+            "webhook",
+            "slack"
+          ],
+          "description": "Alert channel type"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this channel is enabled"
+        },
+        "min_severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "critical"
+          ],
+          "default": "critical",
+          "description": "Minimum severity to trigger alerts"
+        },
+        "webhook_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Webhook URL for webhook alerts"
+        },
+        "webhook_secret": {
+          "type": "string",
+          "description": "Secret for webhook HMAC signing"
+        },
+        "email_recipients": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "description": "Email recipients"
+        },
+        "email_smtp_config": {
+          "type": "object",
+          "description": "SMTP configuration"
+        },
+        "throttle_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 60,
+          "description": "Minutes between duplicate alerts"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "webhook"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "webhook_url"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "email"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "email_recipients"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
