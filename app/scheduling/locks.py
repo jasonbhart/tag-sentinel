@@ -409,6 +409,7 @@ class RedisLockBackend(LockBackend):
             info = await redis_client.info()
 
             return {
+                'backend_type': 'RedisLockBackend',
                 'backend': 'redis',
                 'status': 'healthy',
                 'ping_time_ms': round(ping_time * 1000, 2),
@@ -420,6 +421,7 @@ class RedisLockBackend(LockBackend):
 
         except Exception as e:
             return {
+                'backend_type': 'RedisLockBackend',
                 'backend': 'redis',
                 'status': 'unhealthy',
                 'error': str(e),
@@ -547,6 +549,7 @@ class InMemoryLockBackend(LockBackend):
         """Perform in-memory backend health check."""
         async with self._lock:
             return {
+                'backend_type': 'InMemoryLockBackend',
                 'backend': 'in_memory',
                 'status': 'healthy',
                 'active_locks': len(self._locks),
@@ -760,7 +763,7 @@ class ConcurrencyManager:
 
         return {
             'manager_instance': self.instance_id,
-            'backend': backend_health,
+            'backend_health': backend_health,
             'active_locks_count': len(active_locks),
             'cleanup_task_running': self._cleanup_task is not None and not self._cleanup_task.done(),
             'default_timeout_seconds': self.default_timeout_seconds,
@@ -811,6 +814,10 @@ async def create_concurrency_manager(
         ValueError: If backend_type is invalid
         LockBackendError: If backend initialization fails
     """
+    # Accept alias 'memory' for convenience
+    if backend_type == "memory":
+        backend_type = "in_memory"
+
     if backend_type == "redis":
         if not REDIS_AVAILABLE:
             logger.warning("Redis not available, falling back to in-memory backend")

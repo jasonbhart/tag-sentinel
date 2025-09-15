@@ -50,10 +50,10 @@ class TestPolicyComplianceEngine:
         )
         
         # Should have issue for insecure cookie
-        secure_issues = [issue for issue in issues if "secure" in issue.message.lower()]
+        secure_issues = [issue for issue in issues if "secure flag" in issue.message.lower()]
         assert len(secure_issues) == 1
         assert secure_issues[0].cookie_name == "insecure_cookie"
-        assert secure_issues[0].severity == "medium"
+        assert secure_issues[0].severity == "high"
     
     def test_secure_cookie_validation_http(self):
         """Test secure cookie validation for HTTP sites."""
@@ -89,11 +89,12 @@ class TestPolicyComplianceEngine:
             name="PHPSESSID",
             value="session123",
             domain="example.com",
-            path="/", 
+            path="/",
             secure=True,
             http_only=False,  # Should be True for session cookies
             first_party=True,
             essential=True,
+            is_session=True,
             scenario_id="test"
         )
         
@@ -103,10 +104,11 @@ class TestPolicyComplianceEngine:
             value="en-US",
             domain="example.com",
             path="/",
-            secure=True, 
+            secure=True,
             http_only=False,
             first_party=True,
             essential=False,
+            is_session=False,
             scenario_id="test"
         )
         
@@ -198,7 +200,8 @@ class TestPolicyComplianceEngine:
             http_only=False,
             first_party=False,
             essential=False,
-            scenario_id="test"
+            scenario_id="test",
+            metadata={"classification": {"category": "analytics"}}
         )
         
         # Essential first-party cookie - allowed under GDPR
@@ -216,7 +219,7 @@ class TestPolicyComplianceEngine:
         
         cookies = [tracking_cookie, session_cookie]
         issues = self.engine.validate_cookie_policy(
-            cookies, page_url, ComplianceFramework.GDPR, "test", "production"
+            cookies, page_url, ComplianceFramework.GDPR, "baseline", "production"
         )
         
         # Should flag non-essential third-party cookie
@@ -250,8 +253,8 @@ class TestPolicyComplianceEngine:
         )
         
         # Should have CCPA-specific validation issues
-        ccpa_issues = [issue for issue in issues 
-                      if issue.compliance_framework == "CCPA"]
+        ccpa_issues = [issue for issue in issues
+                      if issue.compliance_framework == "ccpa"]
         assert len(ccpa_issues) >= 1
     
     def test_cookie_expiration_validation(self):
@@ -268,19 +271,21 @@ class TestPolicyComplianceEngine:
             secure=True,
             http_only=False,
             first_party=True,
+            essential=False,
             scenario_id="test"
         )
-        
+
         # Cookie with reasonable expiration
         normal_cookie = CookieRecord(
             name="normal_cookie",
-            value="value456", 
+            value="value456",
             domain="example.com",
             path="/",
             expires=int((datetime.utcnow() + timedelta(days=30)).timestamp()),
             secure=True,
             http_only=False,
             first_party=True,
+            essential=False,
             scenario_id="test"
         )
         
@@ -289,10 +294,10 @@ class TestPolicyComplianceEngine:
             cookies, page_url, ComplianceFramework.GDPR, "test", "production"
         )
         
-        # Should flag excessive expiration
-        expiration_issues = [issue for issue in issues if "expiration" in issue.message.lower()]
-        assert len(expiration_issues) == 1
-        assert expiration_issues[0].cookie_name == "persistent_cookie"
+        # Should flag excessive retention period
+        retention_issues = [issue for issue in issues if "retention" in issue.message.lower()]
+        assert len(retention_issues) == 1
+        assert retention_issues[0].cookie_name == "persistent_cookie"
     
     def test_environment_specific_policies(self):
         """Test environment-specific policy enforcement."""

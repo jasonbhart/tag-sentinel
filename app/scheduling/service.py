@@ -328,7 +328,7 @@ class SchedulingService:
                 "name": schedule_state.schedule.name,
                 "site_id": schedule_state.schedule.site_id,
                 "environment": schedule_state.schedule.environment,
-                "cron_expression": schedule_state.schedule.cron_expression,
+                "cron_expression": schedule_state.schedule.cron,
                 "enabled": schedule_state.schedule.enabled,
                 "status": schedule_state.status.value,
                 "next_run": schedule_state.next_run.isoformat() if schedule_state.next_run else None,
@@ -349,9 +349,8 @@ class SchedulingService:
             self.environment_manager.load_config()
 
         # Initialize blackout manager
-        self.blackout_manager = BlackoutManager(
-            emergency_blackout_enabled=self.config.emergency_blackout_enabled
-        )
+        # Note: BlackoutManager currently accepts only a timezone string
+        self.blackout_manager = BlackoutManager()
 
         # Initialize concurrency manager
         self.concurrency_manager = await create_concurrency_manager(

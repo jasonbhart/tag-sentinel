@@ -659,7 +659,7 @@ class ConfigurationValidator:
         self._validate_capture_config(config.capture)
         
         # Validate schema configuration
-        self._validate_schema_config(config.schema)
+        self._validate_schema_config(config.validation)
         
         # Validate redaction configuration
         self._validate_redaction_config(config.redaction)
@@ -749,8 +749,8 @@ class ConfigurationValidator:
     def _validate_cross_config_consistency(self, config: DataLayerConfig) -> None:
         """Validate consistency across configuration sections."""
         # Check if redaction and schema validation are compatible
-        if config.redaction.enabled and config.schema.enabled:
-            if config.redaction.keep_audit_trail and config.schema.strict_mode:
+        if config.redaction.enabled and config.validation.enabled:
+            if config.redaction.keep_audit_trail and config.validation.strict_mode:
                 self.validation_warnings.append(
                     "Strict schema mode with redaction audit trail may expose sensitive data"
                 )

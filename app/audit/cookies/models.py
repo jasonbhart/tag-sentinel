@@ -201,6 +201,12 @@ class CookiePolicyIssue(BaseModel):
         default=None,
         description="Suggested remediation steps"
     )
+
+    # Compliance context
+    compliance_framework: Optional[str] = Field(
+        default=None,
+        description="Privacy framework that was violated (GDPR, CCPA, etc.)"
+    )
     
     @property
     def cookie_key(self) -> str:

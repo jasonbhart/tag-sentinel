@@ -17,6 +17,11 @@ import zoneinfo
 class CatchUpPolicy(BaseModel):
     """Policy for handling missed schedules after downtime."""
 
+    enabled: bool = Field(
+        default=True,
+        description="Whether catch-up processing is enabled"
+    )
+
     strategy: Literal['skip', 'run_immediately', 'schedule_next', 'gradual_catchup'] = Field(
         default='skip',
         description="Strategy for handling missed schedules"

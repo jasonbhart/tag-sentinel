@@ -11,8 +11,8 @@ from aiohttp.web_response import Response
 import json
 
 from ..scheduling.service import SchedulingService, ServiceStatus, ServiceHealth
-from ..scheduling.models import Schedule, Priority, CatchUpPolicy, BlackoutWindow
-from ..scheduling.scheduler import EngineStats, ScheduleState
+from ..scheduling.models import Schedule, CatchUpPolicy, BlackoutWindow
+from ..scheduling.scheduler import EngineStats, ScheduleRuntimeState
 
 logger = logging.getLogger(__name__)
 
@@ -408,9 +408,9 @@ class ScheduleAPI:
             # Validate cron expression
             if self.service.cron_evaluator:
                 try:
-                    next_run = self.service.cron_evaluator.get_next_run(
+                    next_run = self.service.cron_evaluator.get_next_run_time(
                         schedule.cron,
-                        schedule.timezone
+                        timezone_str=schedule.timezone
                     )
                 except Exception as e:
                     validation_errors.append(f"Invalid cron expression: {str(e)}")
@@ -418,7 +418,7 @@ class ScheduleAPI:
             # Validate environment if environment manager is available
             if self.service.environment_manager and schedule.environment:
                 try:
-                    env_config = await self.service.environment_manager.get_environment_config(
+                    env_config = self.service.environment_manager.resolve_environment_config(
                         schedule.site_id,
                         schedule.environment
                     )
@@ -538,16 +538,16 @@ class ScheduleAPI:
             'cron': schedule.cron,
             'timezone': schedule.timezone,
             'enabled': schedule.enabled,
-            'priority': schedule.priority.value,
+            'priority': schedule.priority,
             'max_concurrent_runs': schedule.max_concurrent_runs,
-            'timeout_minutes': schedule.timeout_minutes,
-            'retry_count': schedule.retry_count,
+            'run_timeout_minutes': schedule.run_timeout_minutes,
+            'max_retries': schedule.max_retries,
             'blackout_windows': [self._serialize_blackout_window(bw) for bw in schedule.blackout_windows],
             'catch_up_policy': self._serialize_catch_up_policy(schedule.catch_up_policy) if schedule.catch_up_policy else None,
             'metadata': schedule.metadata
         }
 
-    def _serialize_schedule_state(self, schedule_state: ScheduleState) -> Dict[str, Any]:
+    def _serialize_schedule_state(self, schedule_state: ScheduleRuntimeState) -> Dict[str, Any]:
         """Serialize a ScheduleState object to a dictionary."""
         schedule_data = self._serialize_schedule(schedule_state.schedule)
         schedule_data.update({
@@ -563,12 +563,15 @@ class ScheduleAPI:
     def _serialize_blackout_window(self, blackout: BlackoutWindow) -> Dict[str, Any]:
         """Serialize a BlackoutWindow object."""
         return {
-            'type': blackout.type.value,
-            'start_time': blackout.start_time.isoformat() if blackout.start_time else None,
-            'end_time': blackout.end_time.isoformat() if blackout.end_time else None,
+            'name': blackout.name,
+            'days_of_week': blackout.days_of_week,
+            'start_time': blackout.start_time,
+            'end_time': blackout.end_time,
+            'start_date': blackout.start_date.isoformat() if blackout.start_date else None,
+            'end_date': blackout.end_date.isoformat() if blackout.end_date else None,
             'timezone': blackout.timezone,
-            'recurrence_rule': blackout.recurrence_rule,
-            'description': blackout.description
+            'priority': blackout.priority,
+            'emergency': blackout.emergency
         }
 
     def _serialize_catch_up_policy(self, policy: CatchUpPolicy) -> Dict[str, Any]:
@@ -576,8 +579,9 @@ class ScheduleAPI:
         return {
             'enabled': policy.enabled,
             'strategy': policy.strategy,
-            'max_catch_up_runs': policy.max_catch_up_runs,
-            'catch_up_window_hours': policy.catch_up_window_hours
+            'max_catchup_window_hours': policy.max_catchup_window_hours,
+            'max_catchup_runs': policy.max_catchup_runs,
+            'gradual_spacing_minutes': policy.gradual_spacing_minutes
         }
 
     def _deserialize_schedule(self, data: Dict[str, Any]) -> Schedule:
@@ -585,12 +589,19 @@ class ScheduleAPI:
         # Generate ID if not provided
         schedule_id = data.get('id') or str(uuid4())
 
-        # Parse priority
-        priority_str = data.get('priority', 'medium')
-        try:
-            priority = Priority(priority_str)
-        except ValueError:
-            raise ValueError(f"Invalid priority: {priority_str}")
+        # Parse priority (convert string to int, default to normal)
+        priority_input = data.get('priority', 0)
+        if isinstance(priority_input, str):
+            # Map string values to integers
+            priority_map = {'low': 1, 'normal': 0, 'medium': 0, 'high': 5}
+            priority = priority_map.get(priority_input.lower(), 0)
+        elif isinstance(priority_input, int):
+            # Validate integer range
+            if priority_input < 0 or priority_input > 10:
+                raise ValueError(f"Priority must be between 0-10, got: {priority_input}")
+            priority = priority_input
+        else:
+            raise ValueError(f"Invalid priority type: {type(priority_input)}")
 
         # Parse blackout windows
         blackout_windows = []
@@ -621,22 +632,26 @@ class ScheduleAPI:
 
     def _deserialize_blackout_window(self, data: Dict[str, Any]) -> BlackoutWindow:
         """Deserialize a BlackoutWindow from dictionary."""
-        # This is a simplified version - real implementation would parse all fields
         return BlackoutWindow(
-            type=data.get('type', 'absolute'),
-            start_time=datetime.fromisoformat(data['start_time']) if data.get('start_time') else None,
-            end_time=datetime.fromisoformat(data['end_time']) if data.get('end_time') else None,
+            name=data['name'],
+            days_of_week=data.get('days_of_week', []),
+            start_time=data['start_time'],
+            end_time=data['end_time'],
+            start_date=datetime.fromisoformat(data['start_date']).date() if data.get('start_date') else None,
+            end_date=datetime.fromisoformat(data['end_date']).date() if data.get('end_date') else None,
             timezone=data.get('timezone', 'UTC'),
-            description=data.get('description')
+            priority=data.get('priority', 0),
+            emergency=data.get('emergency', False)
         )
 
     def _deserialize_catch_up_policy(self, data: Dict[str, Any]) -> CatchUpPolicy:
         """Deserialize a CatchUpPolicy from dictionary."""
         return CatchUpPolicy(
-            enabled=data.get('enabled', False),
+            enabled=data.get('enabled', True),
             strategy=data.get('strategy', 'skip'),
-            max_catch_up_runs=data.get('max_catch_up_runs'),
-            catch_up_window_hours=data.get('catch_up_window_hours')
+            max_catchup_window_hours=data.get('max_catchup_window_hours', 24),
+            max_catchup_runs=data.get('max_catchup_runs'),
+            gradual_spacing_minutes=data.get('gradual_spacing_minutes', 30)
         )
 
     def _error_response(self, status: int, message: str) -> Response:

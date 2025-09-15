@@ -335,9 +335,11 @@ class TestScenarioComparator:
         ]
         
         # Analyze privacy impact
-        impact = self.comparator.analyze_privacy_impact(
-            baseline_cookies, privacy_cookies
-        )
+        scenario_reports = {
+            "baseline": {"cookies": baseline_cookies},
+            "privacy": {"cookies": privacy_cookies}
+        }
+        impact = self.comparator.analyze_privacy_impact(scenario_reports)
         
         # Verify impact analysis
         assert impact["tracking_cookies_blocked"] == 2

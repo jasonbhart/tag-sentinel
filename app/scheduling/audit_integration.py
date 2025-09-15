@@ -62,7 +62,7 @@ class AuditRunnerBackend(RunDispatcherBackend):
                 'site_id': run_request.site_id,
                 'environment': run_request.environment,
                 'schedule_id': run_request.schedule_id,
-                'priority': run_request.priority.value,
+                'priority': run_request.priority,
                 **run_request.metadata
             }
         )

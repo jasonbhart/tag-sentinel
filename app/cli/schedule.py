@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from ..scheduling.service import SchedulingService, ServiceConfig, create_development_service, create_production_service
-from ..scheduling.models import Schedule, Priority
+from ..scheduling.models import Schedule
 
 
 @click.group()
@@ -147,7 +147,7 @@ def list(site_id: Optional[str], environment: Optional[str], status: Optional[st
             "name": "Daily Audit",
             "site_id": "example.com",
             "environment": "production",
-            "cron_expression": "0 2 * * *",
+            "cron": "0 2 * * *",
             "status": "active",
             "next_run": "2024-01-15T02:00:00Z",
             "enabled": True
@@ -157,7 +157,7 @@ def list(site_id: Optional[str], environment: Optional[str], status: Optional[st
             "name": "Hourly Check",
             "site_id": "test.com",
             "environment": "staging",
-            "cron_expression": "0 * * * *",
+            "cron": "0 * * * *",
             "status": "paused",
             "next_run": None,
             "enabled": True
@@ -197,7 +197,7 @@ def get(schedule_id: str, output_format: str):
         "name": "Daily Audit",
         "site_id": "example.com",
         "environment": "production",
-        "cron_expression": "0 2 * * *",
+        "cron": "0 2 * * *",
         "timezone": "UTC",
         "enabled": True,
         "priority": "medium",
@@ -244,7 +244,7 @@ def create(file: Optional[str], site_id: Optional[str], environment: Optional[st
         schedule_data = {
             "site_id": site_id,
             "environment": environment,
-            "cron_expression": cron,
+            "cron": cron,
             "name": name or f"Schedule for {site_id}",
             "priority": priority,
             "enabled": enabled
@@ -276,7 +276,7 @@ def update(schedule_id: str, file: Optional[str], cron: Optional[str], enabled: 
     else:
         updates = {}
         if cron:
-            updates['cron_expression'] = cron
+            updates['cron'] = cron
         if enabled is not None:
             updates['enabled'] = enabled
         if priority:
@@ -378,7 +378,7 @@ def validate(file: Optional[str], site_id: Optional[str], environment: Optional[
         schedule_data = {
             "site_id": site_id,
             "environment": environment,
-            "cron_expression": cron
+            "cron": cron
         }
 
     # Mock validation
@@ -389,8 +389,8 @@ def validate(file: Optional[str], site_id: Optional[str], environment: Optional[
         errors.append("Missing site_id")
     if not schedule_data.get('environment'):
         errors.append("Missing environment")
-    if not schedule_data.get('cron_expression'):
-        errors.append("Missing cron_expression")
+    if not schedule_data.get('cron'):
+        errors.append("Missing cron")
 
     if errors:
         click.echo("❌ Validation failed:")
@@ -416,7 +416,7 @@ def export(file: str, file_format: Optional[str]):
             "name": "Daily Audit",
             "site_id": "example.com",
             "environment": "production",
-            "cron_expression": "0 2 * * *",
+            "cron": "0 2 * * *",
             "timezone": "UTC",
             "enabled": True,
             "priority": "medium"

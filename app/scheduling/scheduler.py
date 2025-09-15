@@ -164,9 +164,9 @@ class ScheduleEngine:
         next_run = None
         if schedule.enabled:
             try:
-                next_run = self.cron_evaluator.get_next_run(
+                next_run = self.cron_evaluator.get_next_run_time(
                     schedule.cron,
-                    schedule.timezone
+                    timezone_str=schedule.timezone
                 )
             except Exception as e:
                 logger.error(f"Failed to calculate next run for schedule {schedule.id}: {e}")
@@ -227,9 +227,9 @@ class ScheduleEngine:
 
         # Recalculate next run
         try:
-            schedule_state.next_run = self.cron_evaluator.get_next_run(
+            schedule_state.next_run = self.cron_evaluator.get_next_run_time(
                 schedule_state.schedule.cron,
-                schedule_state.schedule.timezone
+                timezone_str=schedule_state.schedule.timezone
             )
         except Exception as e:
             logger.error(f"Failed to resume schedule {schedule_id}: {e}")
@@ -262,10 +262,10 @@ class ScheduleEngine:
 
         if not force:
             # Check blackout windows
-            is_blackout = await self.blackout_manager.is_blackout_active(
+            status = self.blackout_manager.is_blackout_active(
                 schedule.blackout_windows
             )
-            if is_blackout:
+            if status.is_blackout:
                 logger.info(f"Skipping triggered run for {schedule_id} due to blackout")
                 return None
 
@@ -307,6 +307,10 @@ class ScheduleEngine:
                 self._stats.last_tick_time = tick_start
                 self._stats.average_tick_duration_ms = sum(self._tick_times) / len(self._tick_times)
 
+                # Record metrics
+                if self.metrics:
+                    self.metrics.record_tick_duration(tick_duration)
+
                 # Wait for next tick or shutdown
                 try:
                     await asyncio.wait_for(
@@ -339,6 +343,10 @@ class ScheduleEngine:
 
         logger.debug(f"Processing {len(due_schedules)} due schedules")
 
+        # Record metrics for schedules processed
+        if self.metrics:
+            self.metrics.increment_schedules_processed(len(due_schedules))
+
         # Process due schedules
         for schedule_state in due_schedules:
             try:
@@ -352,12 +360,16 @@ class ScheduleEngine:
         schedule = schedule_state.schedule
 
         # Check blackout windows
-        is_blackout = await self.blackout_manager.is_blackout_active(
+        status = self.blackout_manager.is_blackout_active(
             schedule.blackout_windows
         )
-        if is_blackout:
+        if status.is_blackout:
             logger.info(f"Skipping run for {schedule.id} due to blackout")
             self._stats.blackout_blocks += 1
+
+            # Record metrics
+            if self.metrics:
+                self.metrics.increment_blackout_blocks()
 
             # Calculate next run after blackout
             await self._calculate_next_run(schedule_state)
@@ -365,7 +377,7 @@ class ScheduleEngine:
 
         # Check for catch-up runs if enabled
         catch_up_runs = []
-        if schedule.catch_up_policy and schedule.catch_up_policy.enabled:
+        if schedule.catch_up_policy and getattr(schedule.catch_up_policy, 'enabled', True):
             catch_up_runs = await self._calculate_catch_up_runs(schedule_state, current_time)
 
         # Create run requests (current + catch-up)
@@ -399,6 +411,12 @@ class ScheduleEngine:
             if len(catch_up_runs) > 0:
                 self._stats.catch_up_runs += len(catch_up_runs)
 
+            # Record metrics
+            if self.metrics:
+                self.metrics.increment_runs_dispatched()
+                if len(catch_up_runs) > 0:
+                    self.metrics.increment_catch_up_runs()
+
             schedule_state.last_run = current_time
             schedule_state.consecutive_failures = 0  # Reset failure count on successful dispatch
 
@@ -426,6 +444,11 @@ class ScheduleEngine:
                     if lock_info is None:
                         logger.info(f"Skipping run for {schedule.id} due to concurrency limit")
                         self._stats.lock_conflicts += 1
+
+                        # Record metrics
+                        if self.metrics:
+                            self.metrics.increment_lock_conflicts()
+
                         return None
 
                     # Lock acquired, dispatch the run
@@ -434,6 +457,11 @@ class ScheduleEngine:
             except Exception as e:
                 logger.warning(f"Failed to acquire lock for {schedule.id}: {e}")
                 self._stats.lock_conflicts += 1
+
+                # Record metrics
+                if self.metrics:
+                    self.metrics.increment_lock_conflicts()
+
                 return None
         else:
             # Force dispatch without concurrency check
@@ -452,9 +480,9 @@ class ScheduleEngine:
     async def _calculate_next_run(self, schedule_state: ScheduleRuntimeState) -> None:
         """Calculate the next run time for a schedule."""
         try:
-            schedule_state.next_run = self.cron_evaluator.get_next_run(
+            schedule_state.next_run = self.cron_evaluator.get_next_run_time(
                 schedule_state.schedule.cron,
-                schedule_state.schedule.timezone
+                timezone_str=schedule_state.schedule.timezone
             )
         except Exception as e:
             logger.error(f"Failed to calculate next run for schedule {schedule_state.schedule.id}: {e}")

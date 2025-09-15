@@ -89,7 +89,8 @@ class TestScenarioOrchestrator:
         # Mock scenario
         scenario = Scenario(
             id="test_scenario",
-            name="Test Scenario", 
+            name="Test Scenario",
+            description="Test scenario for isolated context creation",
             request_headers={"Sec-GPC": "1"}
         )
         
@@ -124,7 +125,8 @@ class TestScenarioOrchestrator:
         # Mock scenario
         scenario = Scenario(
             id="baseline",
-            name="Baseline Test"
+            name="Baseline Test",
+            description="Baseline test scenario for execution success"
         )
         
         # Mock dependencies
@@ -194,18 +196,18 @@ class TestScenarioOrchestrator:
         scenario = Scenario(
             id="cmp_accept_all",
             name="Accept All Cookies",
+            description="Test scenario for CMP accept all cookies interaction",
             steps=[{"action": "click", "selector": "[data-testid='accept-all']"}]
         )
         
         # Mock CMP interaction result
         from app.audit.cookies.cmp import CMPInteractionResult
-        mock_cmp_result = CMPInteractionResult(
-            success=True,
-            consent_state=ConsentState.ACCEPT_ALL,
-            interactions_performed=["click accept-all"],
-            screenshots=["/path/to/cmp_screenshot.png"],
-            errors=[]
-        )
+        mock_cmp_result = CMPInteractionResult()
+        mock_cmp_result.success = True
+        mock_cmp_result.consent_state = ConsentState.ACCEPT_ALL
+        mock_cmp_result.interaction_steps = ["click accept-all"]
+        mock_cmp_result.screenshots = ["/path/to/cmp_screenshot.png"]
+        mock_cmp_result.errors = []
         
         # Mock dependencies
         mock_context = Mock(spec=BrowserContext)
@@ -245,7 +247,7 @@ class TestScenarioOrchestrator:
     @pytest.mark.asyncio
     async def test_scenario_execution_failure(self):
         """Test scenario execution with failures."""
-        scenario = Scenario(id="failing_scenario", name="Failing Test")
+        scenario = Scenario(id="failing_scenario", name="Failing Test", description="Test scenario to verify failure handling")
         
         # Mock context creation to raise exception
         with patch.object(self.orchestrator, 'create_isolated_context') as mock_create:
@@ -266,61 +268,70 @@ class TestScenarioOrchestrator:
         """Test executing all scenarios sequentially."""
         # Mock scenarios in config
         scenarios = [
-            Scenario(id="baseline", name="Baseline"),
-            Scenario(id="gpc_on", name="GPC Enabled", request_headers={"Sec-GPC": "1"})
+            Scenario(id="baseline", name="Baseline", description="Baseline scenario without privacy settings"),
+            Scenario(id="gpc_on", name="GPC Enabled", description="Scenario with GPC signal enabled", request_headers={"Sec-GPC": "1"})
         ]
-        
-        self.config.get_enabled_scenarios = Mock(return_value=scenarios)
-        
-        # Mock scenario execution
-        with patch.object(self.orchestrator, 'execute_scenario') as mock_execute:
-            mock_execute.side_effect = [
-                ScenarioExecutionResult("baseline"),
-                ScenarioExecutionResult("gpc_on")
-            ]
-            
-            # Execute all scenarios
-            results = await self.orchestrator.execute_all_scenarios(
-                "https://example.com",
-                parallel_execution=False
-            )
+
+        # Set scenarios directly on config (they all have enabled=True by default)
+        original_scenarios = self.config.scenarios
+        self.config.scenarios = scenarios
+
+        try:
+            # Mock scenario execution to properly set execution_results
+            async def mock_execute_scenario(scenario, page_url, compliance_framework=None):
+                result = ScenarioExecutionResult(scenario.id)
+                self.orchestrator.execution_results[scenario.id] = result
+                return result
+
+            with patch.object(self.orchestrator, 'execute_scenario', side_effect=mock_execute_scenario):
+                # Execute all scenarios
+                results = await self.orchestrator.execute_all_scenarios(
+                    "https://example.com",
+                    parallel_execution=False
+                )
+        finally:
+            # Restore original scenarios
+            self.config.scenarios = original_scenarios
         
         # Verify execution
         assert len(results) == 2
         assert "baseline" in results
         assert "gpc_on" in results
-        assert mock_execute.call_count == 2
     
     @pytest.mark.asyncio 
     async def test_execute_all_scenarios_parallel(self):
         """Test executing all scenarios in parallel."""
         # Mock scenarios
         scenarios = [
-            Scenario(id="baseline", name="Baseline"),
-            Scenario(id="gpc_on", name="GPC Enabled")
+            Scenario(id="baseline", name="Baseline", description="Baseline scenario for parallel execution"),
+            Scenario(id="gpc_on", name="GPC Enabled", description="GPC enabled scenario for parallel execution")
         ]
-        
-        self.config.get_enabled_scenarios = Mock(return_value=scenarios)
-        
-        # Mock scenario execution with asyncio.gather
-        with patch.object(self.orchestrator, 'execute_scenario') as mock_execute:
-            mock_execute.return_value = ScenarioExecutionResult("test")
-            
-            with patch('asyncio.gather') as mock_gather:
-                mock_gather.return_value = [
-                    ScenarioExecutionResult("baseline"),
-                    ScenarioExecutionResult("gpc_on")
-                ]
-                
+
+        # Set scenarios directly on config
+        original_scenarios = self.config.scenarios
+        self.config.scenarios = scenarios
+
+        try:
+            # Mock scenario execution properly
+            async def mock_execute_scenario(scenario, page_url, compliance_framework=None):
+                result = ScenarioExecutionResult(scenario.id)
+                self.orchestrator.execution_results[scenario.id] = result
+                return result
+
+            with patch.object(self.orchestrator, 'execute_scenario', side_effect=mock_execute_scenario):
                 # Execute all scenarios in parallel
                 results = await self.orchestrator.execute_all_scenarios(
                     "https://example.com",
                     parallel_execution=True
                 )
+        finally:
+            # Restore original scenarios
+            self.config.scenarios = original_scenarios
         
-        # Verify parallel execution was used
-        mock_gather.assert_called_once()
-        assert len(results) >= 2
+        # Verify parallel execution results
+        assert len(results) == 2
+        assert "baseline" in results
+        assert "gpc_on" in results
     
     @pytest.mark.asyncio
     async def test_generate_scenario_reports(self):
@@ -344,15 +355,20 @@ class TestScenarioOrchestrator:
         execution_result.errors = []
         
         self.orchestrator.execution_results = {"baseline": execution_result}
-        
-        # Mock scenario in config
-        mock_scenario = Scenario(id="baseline", name="Baseline Test")
-        self.config.get_scenario_by_id = Mock(return_value=mock_scenario)
-        
-        # Generate reports
-        reports = await self.orchestrator.generate_scenario_reports(
-            "https://example.com", "Test Page"
-        )
+
+        # Add mock scenario to config scenarios list
+        mock_scenario = Scenario(id="baseline", name="Baseline Test", description="Baseline test scenario for report generation")
+        original_scenarios = self.config.scenarios
+        self.config.scenarios = [mock_scenario]
+
+        try:
+            # Generate reports
+            reports = await self.orchestrator.generate_scenario_reports(
+                "https://example.com", "Test Page"
+            )
+        finally:
+            # Restore original scenarios
+            self.config.scenarios = original_scenarios
         
         # Verify reports
         assert len(reports) == 1

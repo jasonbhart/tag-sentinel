@@ -116,7 +116,8 @@ class PolicyComplianceEngine:
                 message=f"Cookie {cookie.name} lacks Secure flag on HTTPS site",
                 scenario_id=context.get('scenario_id'),
                 page_url=page_url,
-                remediation="Add Secure attribute to cookies on HTTPS sites to prevent interception"
+                remediation="Add Secure attribute to cookies on HTTPS sites to prevent interception",
+                compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
             )
         
         return None
@@ -147,7 +148,8 @@ class PolicyComplianceEngine:
                     rule_id="same_site_third_party",
                     message=f"Third-party cookie {cookie.name} should have SameSite=None",
                     page_url=page_url,
-                    remediation="Set SameSite=None for third-party cookies (requires Secure flag)"
+                    remediation="Set SameSite=None for third-party cookies (requires Secure flag)",
+                    compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
                 )
             
             # Third-party cookies with SameSite=None must have Secure flag
@@ -163,14 +165,15 @@ class PolicyComplianceEngine:
                     rule_id="secure_required_same_site_none",
                     message=f"Cookie {cookie.name} with SameSite=None requires Secure flag",
                     page_url=page_url,
-                    remediation="Add Secure flag to cookies with SameSite=None"
+                    remediation="Add Secure flag to cookies with SameSite=None",
+                    compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
                 )
         
         # First-party cookies should have SameSite protection
         else:
             if not cookie.same_site:
                 expected_same_site = "Lax"  # Default for first-party cookies
-                
+
                 return CookiePolicyIssue(
                     cookie_name=cookie.name,
                     cookie_domain=cookie.domain,
@@ -182,9 +185,27 @@ class PolicyComplianceEngine:
                     rule_id="same_site_required",
                     message=f"First-party cookie {cookie.name} should have SameSite attribute",
                     page_url=page_url,
-                    remediation="Set SameSite=Lax for most first-party cookies, or SameSite=Strict for sensitive cookies"
+                    remediation="Set SameSite=Lax for most first-party cookies, or SameSite=Strict for sensitive cookies",
+                    compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
                 )
-        
+
+        # Any cookie with SameSite=None must have Secure flag (regardless of first/third party)
+        if cookie.same_site and cookie.same_site.lower() == 'none' and not cookie.secure:
+            return CookiePolicyIssue(
+                cookie_name=cookie.name,
+                cookie_domain=cookie.domain,
+                cookie_path=cookie.path,
+                attribute="secure",
+                expected="true",
+                observed="false",
+                severity=PolicySeverity.HIGH,
+                rule_id="secure_required_same_site_none",
+                message=f"Cookie {cookie.name} with SameSite=None requires Secure flag",
+                page_url=page_url,
+                remediation="Add Secure flag to cookies with SameSite=None",
+                compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
+            )
+
         return None
     
     def _check_http_only(self, cookie: CookieRecord, context: Dict[str, Any]) -> Optional[CookiePolicyIssue]:
@@ -224,7 +245,8 @@ class PolicyComplianceEngine:
                 rule_id="http_only_sessions",
                 message=f"Session/authentication cookie {cookie.name} should have HttpOnly flag",
                 page_url=page_url,
-                remediation="Add HttpOnly flag to prevent client-side script access to sensitive cookies"
+                remediation="Add HttpOnly flag to prevent client-side script access to sensitive cookies",
+                compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
             )
         
         return None
@@ -312,7 +334,17 @@ class PolicyComplianceEngine:
         
         # Calculate retention period
         now = datetime.utcnow()
-        retention_days = (cookie.expires - now).days
+
+        # Convert expires timestamp to datetime if needed
+        if isinstance(cookie.expires, (int, float)):
+            expires_dt = datetime.utcfromtimestamp(cookie.expires)
+        else:
+            expires_dt = cookie.expires
+            # Ensure expires_dt is timezone-naive like now
+            if hasattr(expires_dt, 'tzinfo') and expires_dt.tzinfo is not None:
+                expires_dt = expires_dt.replace(tzinfo=None)
+
+        retention_days = (expires_dt - now).days
         
         # Check for non-essential cookies with long retention
         if retention_days > max_retention_days and not cookie.essential:
@@ -327,7 +359,8 @@ class PolicyComplianceEngine:
                 rule_id="retention_period_limit",
                 message=f"Cookie {cookie.name} retention period exceeds {framework.value.upper()} guidelines",
                 page_url=page_url,
-                remediation=f"Reduce cookie retention to {max_retention_days} days or less for non-essential cookies"
+                remediation=f"Reduce cookie retention to {max_retention_days} days or less for non-essential cookies",
+                compliance_framework=context.get('framework', ComplianceFramework.GDPR).value
             )
         
         return None
