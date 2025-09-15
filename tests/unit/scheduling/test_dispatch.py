@@ -5,6 +5,7 @@ import pytest_asyncio
 import asyncio
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
+from typing import Optional
 
 from app.scheduling.dispatch import (
     RunDispatcher,
@@ -42,11 +43,21 @@ class MockAuditBackend:
         self.dispatched_runs[run_request.id] = result
         return result
 
-    async def get_run_result(self, run_id: str) -> RunResult:
-        """Get mock run result."""
+    async def get_run_status(self, run_id: str) -> Optional[RunResult]:
+        """Get mock run status."""
         if run_id in self.dispatched_runs:
             return self.dispatched_runs[run_id]
         return None
+
+    async def cancel_run(self, run_id: str) -> bool:
+        """Cancel mock run."""
+        if run_id in self.dispatched_runs:
+            result = self.dispatched_runs[run_id]
+            if not result.is_complete:
+                result.status = RunStatus.CANCELLED
+                result.completed_at = datetime.now(timezone.utc)
+                return True
+        return False
 
 
 class TestRunDispatcher:
@@ -257,7 +268,7 @@ class TestMockDispatcher:
     @pytest.mark.asyncio
     async def test_create_mock_dispatcher(self):
         """Test creating mock dispatcher."""
-        dispatcher = await create_mock_dispatcher()
+        dispatcher = create_mock_dispatcher()
 
         assert isinstance(dispatcher, RunDispatcher)
 
@@ -357,7 +368,7 @@ class TestDispatcherConfiguration:
             backend=backend,
             max_concurrent_runs=5,
             max_queue_size=100,
-            idempotency_window=timedelta(hours=2)
+            idempotency_window_minutes=120  # 2 hours
         )
 
         assert dispatcher.max_concurrent_runs == 5

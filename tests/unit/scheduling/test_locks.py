@@ -1,6 +1,7 @@
 """Unit tests for distributed concurrency control system."""
 
 import pytest
+import pytest_asyncio
 import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -264,11 +265,11 @@ class TestInMemoryLockBackend:
 class TestConcurrencyManager:
     """Test ConcurrencyManager functionality."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def manager(self):
         """Create a ConcurrencyManager for testing."""
         backend = InMemoryLockBackend()
-        manager = ConcurrencyManager(backend, default_timeout_seconds=300, metadata={})
+        manager = ConcurrencyManager(backend, default_timeout_seconds=300)
         await manager.start()
         yield manager
         await manager.stop()
@@ -278,13 +279,12 @@ class TestConcurrencyManager:
         """Test acquiring and releasing site-environment locks."""
         site_id = "test-site"
         environment = "production"
-        owner_id = str(uuid4())
 
         # Acquire lock
-        async with manager.acquire_lock(site_id, environment, owner_id) as lock_info:
+        async with manager.acquire_lock(site_id, environment) as lock_info:
             assert lock_info is not None
-            assert lock_info.key == f"audit-lock:test-site:production"
-            assert lock_info.owner_id == owner_id
+            assert lock_info.key == f"site:test-site:env:production"
+            assert lock_info.owner_id.startswith(manager.instance_id)
 
             # Check lock status
             is_locked = await manager.is_locked(site_id, environment)
@@ -319,14 +319,13 @@ class TestConcurrencyManager:
         """Test retrieving lock status information."""
         site_id = "status-test"
         environment = "development"
-        owner_id = str(uuid4())
 
         # No lock initially
         status = await manager.get_lock_status(site_id, environment)
         assert status is None
 
         # Acquire lock and check status
-        async with manager.acquire_lock(site_id, environment, owner_id):
+        async with manager.acquire_lock(site_id, environment):
             status = await manager.get_lock_status(site_id, environment)
             assert status is not None
             assert status.owner_id == owner_id
@@ -359,10 +358,9 @@ class TestConcurrencyManager:
         """Test force releasing locks (admin operation)."""
         site_id = "force-release"
         environment = "prod"
-        owner_id = str(uuid4())
 
         # Acquire lock
-        async with manager.acquire_lock(site_id, environment, owner_id):
+        async with manager.acquire_lock(site_id, environment):
             # Verify lock is active
             assert await manager.is_locked(site_id, environment) is True
 
@@ -387,11 +385,10 @@ class TestConcurrencyManager:
         """Test that locks are released even if errors occur."""
         site_id = "error-test"
         environment = "test"
-        owner_id = str(uuid4())
 
         # Acquire lock and raise exception
         with pytest.raises(ValueError):
-            async with manager.acquire_lock(site_id, environment, owner_id):
+            async with manager.acquire_lock(site_id, environment):
                 # Verify lock is active during execution
                 assert await manager.is_locked(site_id, environment) is True
                 raise ValueError("Test error")
@@ -417,8 +414,7 @@ class TestConvenienceFunctions:
         # Test basic functionality
         await manager.start()
         try:
-            owner_id = str(uuid4())
-            async with manager.acquire_lock("test", "env", owner_id) as lock:
+            async with manager.acquire_lock("test", "env") as lock:
                 assert lock is not None
         finally:
             await manager.stop()
@@ -438,8 +434,7 @@ class TestConvenienceFunctions:
         await manager.start()
         try:
             # Test that it works
-            owner_id = str(uuid4())
-            async with manager.acquire_lock("fallback", "test", owner_id) as lock:
+            async with manager.acquire_lock("fallback", "test") as lock:
                 assert lock is not None
         finally:
             await manager.stop()
@@ -499,9 +494,8 @@ class TestErrorConditions:
     async def test_manager_operations_before_start(self):
         """Test that manager operations work correctly before start() is called."""
         backend = InMemoryLockBackend()
-        manager = ConcurrencyManager(backend, default_timeout_seconds=300, metadata={})
+        manager = ConcurrencyManager(backend, default_timeout_seconds=300)
 
         # Should still work without calling start()
-        owner_id = str(uuid4())
-        async with manager.acquire_lock("test", "env", owner_id) as lock:
+        async with manager.acquire_lock("test", "env") as lock:
             assert lock is not None
