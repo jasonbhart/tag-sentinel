@@ -104,10 +104,14 @@ class TestMPDebugValidation:
                 }
             ]
         }
-        
+
         with patch('httpx.AsyncClient.post') as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = mock_response
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 200
+            mock_response_obj.json.return_value = mock_response
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
             
             result = await detector.detect(ga4_page_result, non_production_context)
         
@@ -157,11 +161,15 @@ class TestMPDebugValidation:
                 }
             ]
         }
-        
+
         with patch('httpx.AsyncClient.post') as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = mock_response
-            
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 200
+            mock_response_obj.json.return_value = mock_response
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
+
             result = await detector.detect(ga4_page_result, non_production_context)
         
         assert result.success
@@ -200,13 +208,17 @@ class TestMPDebugValidation:
                 }
             ]
         }
-        
+
         with patch('httpx.AsyncClient.post') as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = mock_response
-            
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 200
+            mock_response_obj.json.return_value = mock_response
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
+
             result = await detector.detect(ga4_page_result, non_production_context)
-        
+
         assert result.success  # Should still succeed even with validation errors
         
         # Should have validation error notes
@@ -240,9 +252,13 @@ class TestMPDebugValidation:
         
         with patch('httpx.AsyncClient.post') as mock_post:
             # Simulate HTTP 500 error
-            mock_post.return_value.status_code = 500
-            mock_post.return_value.text = "Internal Server Error"
-            
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 500
+            mock_response_obj.text = "Internal Server Error"
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
+
             result = await detector.detect(ga4_page_result, non_production_context)
         
         # Should still succeed despite MP debug failure
@@ -257,10 +273,14 @@ class TestMPDebugValidation:
         detector = GA4Detector()
         
         with patch('httpx.AsyncClient.post') as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.side_effect = ValueError("Invalid JSON")
-            mock_post.return_value.text = "Not valid JSON"
-            
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 200
+            mock_response_obj.json.side_effect = ValueError("Invalid JSON")
+            mock_response_obj.text = "Not valid JSON"
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
+
             result = await detector.detect(ga4_page_result, non_production_context)
         
         # Should still succeed despite invalid JSON response
@@ -292,7 +312,12 @@ class TestMPDebugValidation:
             # Simulate slow response that would exceed timeout
             async def slow_response(*args, **kwargs):
                 await asyncio.sleep(0.2)  # 200ms delay, exceeds 100ms timeout
-                return AsyncMock(status_code=200, json=lambda: {})
+                from unittest.mock import Mock
+                mock_response = Mock()
+                mock_response.status_code = 200
+                mock_response.json.return_value = {}
+                mock_response.raise_for_status = lambda: None
+                return mock_response
                 
             mock_post.side_effect = slow_response
             
@@ -349,9 +374,13 @@ class TestMPDebugValidation:
         detector = GA4Detector()
         
         with patch('httpx.AsyncClient.post') as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = {"validationMessages": []}
-            
+            from unittest.mock import Mock
+            mock_response_obj = Mock()
+            mock_response_obj.status_code = 200
+            mock_response_obj.json.return_value = {"validationMessages": []}
+            mock_response_obj.raise_for_status = lambda: None
+            mock_post.return_value = mock_response_obj
+
             result = await detector.detect(page_with_multiple_requests, non_production_context)
         
         assert result.success

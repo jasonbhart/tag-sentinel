@@ -13,7 +13,7 @@ import logging
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from .models import Scenario, PrivacyConfig
+from .models import Scenario
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +91,33 @@ class ClassificationConfig(BaseModel):
         default_factory=list,
         description="Regex patterns for essential cookies"
     )
+    non_essential_patterns: List[str] = Field(
+        default_factory=list,
+        description="Regex patterns for non-essential cookies"
+    )
     analytics_patterns: List[str] = Field(
         default_factory=list,
         description="Regex patterns for analytics cookies"
     )
+    marketing_patterns: List[str] = Field(
+        default_factory=list,
+        description="Regex patterns for marketing cookies"
+    )
+    functional_patterns: List[str] = Field(
+        default_factory=list,
+        description="Regex patterns for functional cookies"
+    )
     analytics_domains: List[str] = Field(
         default_factory=list,
         description="Known analytics domains"
+    )
+    domain_mappings: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Domain to category mappings"
+    )
+    pattern_mappings: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Pattern to category mappings"
     )
 
 
@@ -164,6 +184,7 @@ class PrivacyConfiguration(BaseModel):
     def get_enabled_scenarios(self) -> List[Scenario]:
         """Get list of enabled scenarios."""
         return [scenario for scenario in self.scenarios if scenario.enabled]
+    
     
     def get_scenario_by_id(self, scenario_id: str) -> Optional[Scenario]:
         """Get scenario by ID."""

@@ -283,8 +283,8 @@ class CookieClassifier:
         cookie_name = cookie.name.lower()
         cookie_domain = cookie.domain.lower()
         
-        # Essential/Necessary cookies (high confidence patterns)
-        essential_patterns = [
+        # Essential/Necessary cookies - combine defaults with config patterns
+        default_essential_patterns = [
             (r'^session.*', CookieCategory.ESSENTIAL, 0.95),
             (r'^jsessionid$', CookieCategory.ESSENTIAL, 0.98),
             (r'^phpsessid$', CookieCategory.ESSENTIAL, 0.98),
@@ -295,6 +295,20 @@ class CookieClassifier:
             (r'^login.*', CookieCategory.ESSENTIAL, 0.85),
             (r'^security.*', CookieCategory.ESSENTIAL, 0.80),
         ]
+        
+        # Add custom patterns from config (higher priority)
+        essential_patterns = []
+        if self.config and self.config.classification:
+            for pattern in self.config.classification.essential_patterns:
+                essential_patterns.append((pattern, CookieCategory.ESSENTIAL, 0.95))
+        essential_patterns.extend(default_essential_patterns)
+        
+        # Non-essential patterns from config (these override defaults)
+        non_essential_patterns = []
+        if self.config and self.config.classification:
+            for pattern in self.config.classification.non_essential_patterns:
+                # Non-essential could be analytics, marketing, etc. Default to preference category
+                non_essential_patterns.append((pattern, CookieCategory.PREFERENCE, 0.90))
         
         # Analytics cookies
         analytics_patterns = [
@@ -327,22 +341,28 @@ class CookieClassifier:
             (r'^bcookie$', CookieCategory.SOCIAL, 0.85),  # LinkedIn
         ]
         
-        # Preference/Functional cookies
+        # Functional cookies (necessary for website functionality)
+        functional_patterns = [
+            (r'^lang.*', CookieCategory.FUNCTIONAL, 0.85),
+            (r'^locale.*', CookieCategory.FUNCTIONAL, 0.85),
+            (r'^currency.*', CookieCategory.FUNCTIONAL, 0.80),
+            (r'^region.*', CookieCategory.FUNCTIONAL, 0.80),
+        ]
+        
+        # Preference/Customization cookies
         preference_patterns = [
             (r'^pref.*', CookieCategory.PREFERENCE, 0.85),
             (r'^settings.*', CookieCategory.PREFERENCE, 0.85),
             (r'^theme.*', CookieCategory.PREFERENCE, 0.80),
-            (r'^lang.*', CookieCategory.PREFERENCE, 0.80),
-            (r'^locale.*', CookieCategory.PREFERENCE, 0.80),
             (r'^timezone.*', CookieCategory.PREFERENCE, 0.80),
             (r'^consent.*', CookieCategory.PREFERENCE, 0.90),
             (r'^cookie.*', CookieCategory.PREFERENCE, 0.75),
         ]
         
-        # Check patterns in order of specificity
+        # Check patterns in order of specificity (custom patterns first for higher priority)
         all_patterns = (
-            essential_patterns + analytics_patterns + 
-            marketing_patterns + social_patterns + preference_patterns
+            non_essential_patterns + essential_patterns + analytics_patterns + 
+            marketing_patterns + social_patterns + functional_patterns + preference_patterns
         )
         
         for pattern, category, confidence in all_patterns:
@@ -378,7 +398,11 @@ class CookieClassifier:
             else:
                 return CookieCategory.FUNCTIONAL, 0.50
         else:
-            # Third-party cookies are more likely to be marketing/analytics
+            # For third-party cookies, check if we can make a reasonable guess
+            # If the cookie name suggests it's unknown/unclassifiable, mark as unknown
+            if any(keyword in cookie_name for keyword in ['unknown', 'test', 'temp', 'debug']):
+                return CookieCategory.UNKNOWN, 0.50
+            # Otherwise, assume marketing/analytics (low confidence)
             return CookieCategory.MARKETING, 0.40
     
     def classify_cookies(self, cookies: List[CookieRecord], page_url: str) -> List[CookieRecord]:
@@ -403,6 +427,17 @@ class CookieClassifier:
             # Update cookie with classification
             updated_cookie = cookie.model_copy()
             updated_cookie.is_first_party = is_first_party
+            
+            # Set category in metadata.classification (standardized design)
+            if 'classification' not in updated_cookie.metadata:
+                updated_cookie.metadata['classification'] = {}
+            updated_cookie.metadata['classification']['category'] = category
+            
+            # Sync first_party field with is_first_party for backward compatibility
+            if hasattr(updated_cookie, 'update_first_party_status'):
+                updated_cookie.update_first_party_status(is_first_party)
+            elif hasattr(updated_cookie, 'first_party'):
+                updated_cookie.first_party = is_first_party
             
             # Update metadata
             if not updated_cookie.metadata:

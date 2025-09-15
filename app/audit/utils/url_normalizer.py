@@ -55,33 +55,85 @@ def normalize(url: str) -> str:
         
         # Normalize host to lowercase and handle IDN
         try:
-            # Handle internationalized domain names
+            # Handle internationalized domain names and IPv6
             netloc = parsed.netloc.lower()
+            userinfo = None
+
             if '@' in netloc:
                 # Handle userinfo (should be rare for web crawling)
                 userinfo, host_port = netloc.rsplit('@', 1)
-                netloc = f"{userinfo}@{host_port}"
             else:
                 host_port = netloc
-                
-            # Split host and port
-            if ':' in host_port and not host_port.startswith('['):
+
+            # Handle IPv6 addresses with optional port: [IPv6]:port
+            if host_port.startswith('['):
+                # IPv6 address with optional port
+                if ']:' in host_port:
+                    # [IPv6]:port format
+                    ipv6_part, port_str = host_port.rsplit(']:', 1)
+                    ipv6_addr = ipv6_part + ']'  # Include closing bracket
+                    try:
+                        port_num = int(port_str)
+                        # Remove default ports for IPv6
+                        if ((scheme == 'http' and port_num == 80) or
+                            (scheme == 'https' and port_num == 443)):
+                            host_port = ipv6_addr
+                        else:
+                            host_port = f"{ipv6_addr}:{port_num}"
+                    except ValueError:
+                        # Invalid port, keep as-is
+                        pass
+                else:
+                    # Just IPv6 address without port
+                    if host_port.endswith(']'):
+                        host_port = host_port.lower()
+                    else:
+                        # Malformed IPv6, keep as-is
+                        pass
+            elif ':' in host_port:
                 # IPv4 or hostname with port
                 host, port = host_port.rsplit(':', 1)
                 try:
                     port_num = int(port)
                     # Remove default ports
-                    if ((scheme == 'http' and port_num == 80) or 
+                    if ((scheme == 'http' and port_num == 80) or
                         (scheme == 'https' and port_num == 443)):
-                        netloc = host if '@' not in netloc else f"{netloc.split('@')[0]}@{host}"
+                        host_port = host
                     else:
-                        netloc = netloc  # Keep non-default ports
+                        host_port = f"{host}:{port_num}"
+
+                    # Normalize IDN for the host part
+                    if not host.startswith('['):  # Don't encode IPv6
+                        try:
+                            # Convert internationalized domain to punycode
+                            normalized_host = host.encode('idna').decode('ascii')
+                            if port_num not in (80 if scheme == 'http' else 443 if scheme == 'https' else None, None):
+                                host_port = f"{normalized_host}:{port_num}"
+                            else:
+                                host_port = normalized_host
+                        except UnicodeError:
+                            # IDN encoding failed, keep original
+                            pass
                 except ValueError:
-                    # Invalid port, keep as-is
+                    # Invalid port, try IDN normalization on whole thing
+                    try:
+                        host_port = host_port.encode('idna').decode('ascii')
+                    except UnicodeError:
+                        # Keep as-is if IDN fails
+                        pass
+            else:
+                # No port, just host - try IDN normalization
+                try:
+                    host_port = host_port.encode('idna').decode('ascii')
+                except UnicodeError:
+                    # IDN encoding failed, keep original
                     pass
-            elif host_port.startswith('[') and host_port.endswith(']'):
-                # IPv6 address
-                netloc = host_port.lower()
+
+            # Reconstruct netloc
+            if userinfo:
+                netloc = f"{userinfo}@{host_port}"
+            else:
+                netloc = host_port
                 
         except UnicodeError:
             raise URLNormalizationError(f"Invalid Unicode in hostname: {parsed.netloc}")

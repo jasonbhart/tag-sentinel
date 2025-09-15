@@ -250,7 +250,7 @@ class EventDuplicateCheck(BaseCheck):
             'min_duplicates',
             'max_allowed_duplicates',
             'vendor_filter',
-            'event_type_filter',
+            'name_filter',
             'parameter_keys'
         ]
     
@@ -266,10 +266,10 @@ class EventDuplicateCheck(BaseCheck):
             vendor = config['vendor_filter']
             events = [e for e in events if e.vendor == vendor]
         
-        # Apply event type filter if specified
-        if 'event_type_filter' in config:
-            event_type = config['event_type_filter']
-            events = [e for e in events if e.event_type == event_type]
+        # Apply name filter if specified
+        if 'name_filter' in config:
+            name = config['name_filter']
+            events = [e for e in events if e.name == name]
         
         # Group events by similarity
         duplicate_groups = self._group_events(events, config)
@@ -299,7 +299,7 @@ class EventDuplicateCheck(BaseCheck):
     
     def _group_events(self, events: List[TagEvent], config: Dict[str, Any]) -> List[DuplicateGroup]:
         """Group events by similarity criteria."""
-        grouping_fields = config.get('grouping_fields', ['vendor', 'event_type', 'tag_id'])
+        grouping_fields = config.get('grouping_fields', ['vendor', 'name', 'id'])
         ignore_parameters = set(config.get('ignore_parameters', ['timestamp', '_t']))
         parameter_keys = config.get('parameter_keys', [])
         time_window = config.get('time_window_seconds', 0)
@@ -338,12 +338,10 @@ class EventDuplicateCheck(BaseCheck):
         for field in grouping_fields:
             if field == 'vendor':
                 key_parts.append(event.vendor)
-            elif field == 'event_type':
-                key_parts.append(event.event_type)
-            elif field == 'tag_id':
-                key_parts.append(event.tag_id or '')
-            elif field == 'event_name':
-                key_parts.append(event.event_name or '')
+            elif field == 'name':
+                key_parts.append(event.name)
+            elif field == 'id':
+                key_parts.append(event.id or '')
             elif field == 'page_url':
                 key_parts.append(event.page_url or '')
         
@@ -351,12 +349,12 @@ class EventDuplicateCheck(BaseCheck):
         if parameter_keys:
             for param_key in parameter_keys:
                 if param_key not in ignore_parameters:
-                    param_value = event.parameters.get(param_key, '')
+                    param_value = event.params.get(param_key, '')
                     key_parts.append(f"{param_key}:{param_value}")
         else:
             # Include all parameters except ignored ones
             sorted_params = sorted(
-                (k, v) for k, v in event.parameters.items()
+                (k, v) for k, v in event.params.items()
                 if k not in ignore_parameters
             )
             param_string = '&'.join(f"{k}={v}" for k, v in sorted_params)

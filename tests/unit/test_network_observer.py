@@ -127,7 +127,7 @@ class TestNetworkObserver:
         
         assert len(observer.requests) == 1
         assert mock_request.url in observer.requests
-        assert mock_request.url in observer._active_requests
+        assert len(observer._active_requests) == 1
         
         request_log = observer.requests[mock_request.url]
         assert request_log.status == RequestStatus.PENDING

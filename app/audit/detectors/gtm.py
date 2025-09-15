@@ -36,8 +36,8 @@ from ..models.capture import PageResult, RequestLog
 class GTMDetector(BaseDetector, ResilientDetector):
     """Detector for Google Tag Manager container loading and configuration."""
     
-    def __init__(self):
-        super().__init__("GTMDetector", "1.0.0")
+    def __init__(self, name: str = "GTMDetector"):
+        super().__init__(name, "1.0.0")
     
     @property
     def supported_vendors(self) -> Set[Vendor]:

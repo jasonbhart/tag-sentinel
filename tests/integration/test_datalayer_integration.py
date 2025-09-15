@@ -301,7 +301,7 @@ class TestDataLayerValidationIntegration:
         assert any("required" in msg or "missing" in msg for msg in error_messages)
         assert any("enum" in msg or "invalid" in msg for msg in error_messages)
         assert any("format" in msg or "email" in msg for msg in error_messages)
-        assert ValidationSeverity.ERROR in severity_levels
+        assert ValidationSeverity.CRITICAL in severity_levels
 
 
 @pytest.mark.integration

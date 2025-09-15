@@ -64,18 +64,20 @@ class CookieConsentService:
     async def analyze_page_privacy(
         self,
         page_url: str,
+        page_title: Optional[str] = None,  # Added for backward compatibility
         compliance_framework: ComplianceFramework = ComplianceFramework.GDPR,
         parallel_execution: bool = False,
         include_performance_metrics: bool = True
     ) -> PrivacyAnalysisResult:
         """Perform comprehensive privacy analysis of a web page.
-        
+
         Args:
             page_url: URL to analyze
+            page_title: Optional page title (for backward compatibility)
             compliance_framework: Privacy framework for compliance validation
             parallel_execution: Whether to run scenarios in parallel
             include_performance_metrics: Whether to include detailed performance metrics
-            
+
         Returns:
             Comprehensive privacy analysis result
         """
@@ -583,7 +585,7 @@ class CookieConsentService:
                 f"scenarios_configured={len(self.config.scenarios) if self.config else 0})")
 
 
-# Convenience functions for easy integration
+# Convenience functions for backward compatibility and easy integration
 
 async def analyze_page_privacy(
     browser: Browser,
@@ -595,16 +597,16 @@ async def analyze_page_privacy(
     parallel_execution: bool = False
 ) -> PrivacyAnalysisResult:
     """Convenience function for single-page privacy analysis.
-    
+
     Args:
         browser: Playwright browser instance
         page_url: URL to analyze
-        page_title: Optional page title for analysis context
+        page_title: Optional page title for analysis context (preserved for backward compatibility)
         config: Privacy configuration
         artifacts_dir: Directory for artifacts and screenshots
         compliance_framework: Privacy framework for validation
         parallel_execution: Whether to run scenarios in parallel
-        
+
     Returns:
         Privacy analysis result
     """
@@ -612,35 +614,39 @@ async def analyze_page_privacy(
     try:
         return await service.analyze_page_privacy(page_url, compliance_framework, parallel_execution)
     finally:
-        # Handle both real service and mock objects for testing
+        # Handle cleanup gracefully
         cleanup_method = getattr(service, 'cleanup', None)
-        if cleanup_method and hasattr(cleanup_method, '__call__'):
-            # Check if it's an async method or just a mock
+        if cleanup_method and callable(cleanup_method):
             try:
                 await service.cleanup()
             except TypeError:
-                # Mock object - call it synchronously
+                # Mock object - call synchronously
                 service.cleanup()
 
 
 def create_cookie_consent_service(
     browser: Browser,
-    config_path: Optional[Path] = None,
+    config_path_or_config: Optional[Union[Path, 'PrivacyConfiguration']] = None,
     artifacts_dir: Optional[Path] = None
 ) -> CookieConsentService:
     """Create configured Cookie & Consent Service.
-    
+
     Args:
         browser: Playwright browser instance
-        config_path: Path to privacy configuration file
+        config_path_or_config: Path to privacy configuration file or PrivacyConfiguration object
         artifacts_dir: Directory for artifacts
-        
+
     Returns:
         Configured service instance
     """
+    from .config import PrivacyConfiguration, load_privacy_config_from_file
+
     config = None
-    if config_path:
-        from .config import load_privacy_config_from_file
-        config = load_privacy_config_from_file(config_path)
-    
+    if config_path_or_config:
+        if isinstance(config_path_or_config, PrivacyConfiguration):
+            config = config_path_or_config
+        else:
+            config = load_privacy_config_from_file(config_path_or_config)
+
     return CookieConsentService(browser, config, artifacts_dir)
+

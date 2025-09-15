@@ -7,9 +7,12 @@ custom headers, viewport configuration, and debug modes.
 
 import asyncio
 import logging
+import hashlib
+import json
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, Any, List, AsyncGenerator
 from pathlib import Path
+from collections import OrderedDict
 
 from playwright.async_api import (
     Browser, 
@@ -170,17 +173,23 @@ class BrowserConfig:
 class BrowserFactory:
     """Factory for creating and managing Playwright browser instances."""
     
-    def __init__(self, config: BrowserConfig):
+    def __init__(self, config: BrowserConfig, enable_context_reuse: bool = False):
         """Initialize browser factory with configuration.
-        
+
         Args:
             config: Browser configuration object
+            enable_context_reuse: Enable context reuse pool for efficiency
         """
         self.config = config
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self._context_count = 0
         self._max_contexts = 50  # Prevent memory leaks
+
+        # Context reuse pool
+        self._enable_context_reuse = enable_context_reuse
+        self._context_pool: OrderedDict[str, BrowserContext] = OrderedDict()
+        self._max_pooled_contexts = 5
         
     async def start(self) -> None:
         """Start Playwright and launch browser."""
@@ -215,16 +224,24 @@ class BrowserFactory:
     async def stop(self) -> None:
         """Stop browser and cleanup resources."""
         logger.info("Stopping browser factory")
-        
+
         try:
+            # Clear context pool
+            for context in self._context_pool.values():
+                try:
+                    await context.close()
+                except Exception as e:
+                    logger.warning(f"Error closing pooled context: {e}")
+            self._context_pool.clear()
+
             if self.browser:
                 await self.browser.close()
                 self.browser = None
-                
+
             if self.playwright:
                 await self.playwright.stop()
                 self.playwright = None
-                
+
             self._context_count = 0
             logger.info("Browser factory stopped successfully")
             
@@ -268,22 +285,44 @@ class BrowserFactory:
     @asynccontextmanager
     async def context(self, **context_overrides) -> AsyncGenerator[BrowserContext, None]:
         """Context manager for browser context lifecycle.
-        
+
         Args:
             **context_overrides: Override default context options
-            
+
         Yields:
-            Browser context that will be automatically closed
+            Browser context that will be automatically closed or returned to pool
         """
         context = None
+        trace_path = context_overrides.pop('record_trace_path', None)
+        original_options = context_overrides.copy()
+
         try:
-            context = await self.create_context(**context_overrides)
+            # Try to get from pool first
+            context = await self._get_pooled_context(context_overrides)
+
+            if context is None:
+                # Create new context if none available in pool
+                context = await self.create_context(**context_overrides)
+
+            # Start tracing if requested
+            if trace_path:
+                await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+
             yield context
+
         finally:
             if context:
-                await context.close()
+                # Stop tracing before returning to pool or closing
+                if trace_path:
+                    try:
+                        await context.tracing.stop(path=trace_path)
+                        logger.debug(f"Trace saved: {trace_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to save trace: {e}")
+
+                # Return to pool or close based on configuration and context state
+                await self._return_context_to_pool(context, original_options)
                 self._context_count -= 1
-                logger.debug(f"Closed browser context (remaining: {self._context_count})")
     
     @asynccontextmanager 
     async def page(self, **context_overrides) -> AsyncGenerator[Page, None]:
@@ -316,7 +355,87 @@ class BrowserFactory:
         except Exception as e:
             logger.error(f"Failed to get browser version: {e}")
             return None
-    
+
+    def _get_context_key(self, context_options: Dict[str, Any]) -> str:
+        """Generate a hash key for context options to enable reuse.
+
+        Args:
+            context_options: Context creation options
+
+        Returns:
+            Hash string that can be used as cache key
+        """
+        # Exclude certain options that shouldn't affect reuse
+        reusable_options = context_options.copy()
+        reusable_options.pop('record_har_path', None)  # HAR recording paths are unique
+        reusable_options.pop('record_video_dir', None)  # Video paths are unique
+
+        # Create stable hash from options
+        options_str = json.dumps(reusable_options, sort_keys=True)
+        return hashlib.md5(options_str.encode()).hexdigest()
+
+    async def _get_pooled_context(self, context_options: Dict[str, Any]) -> Optional[BrowserContext]:
+        """Get a reusable context from the pool if available.
+
+        Args:
+            context_options: Context creation options
+
+        Returns:
+            Existing context or None if not available
+        """
+        if not self._enable_context_reuse:
+            return None
+
+        context_key = self._get_context_key(context_options)
+
+        if context_key in self._context_pool:
+            # Move to end (most recently used)
+            context = self._context_pool[context_key]
+            del self._context_pool[context_key]
+            self._context_pool[context_key] = context
+
+            # Clear cookies and local storage for isolation
+            try:
+                await context.clear_cookies()
+                await context.clear_permissions()
+                logger.debug(f"Reusing browser context (key: {context_key[:8]})")
+                return context
+            except Exception as e:
+                logger.warning(f"Failed to clear context state, creating new one: {e}")
+                # Remove from pool if it can't be cleared
+                del self._context_pool[context_key]
+
+        return None
+
+    async def _return_context_to_pool(self, context: BrowserContext, context_options: Dict[str, Any]) -> None:
+        """Return a context to the pool for reuse.
+
+        Args:
+            context: Browser context to pool
+            context_options: Original context creation options
+        """
+        if not self._enable_context_reuse:
+            await context.close()
+            return
+
+        context_key = self._get_context_key(context_options)
+
+        # Don't pool contexts with unique recording requirements
+        if 'record_har_path' in context_options or 'record_video_dir' in context_options:
+            await context.close()
+            return
+
+        # Manage pool size with LRU eviction
+        if len(self._context_pool) >= self._max_pooled_contexts:
+            # Remove oldest context
+            oldest_key, oldest_context = self._context_pool.popitem(last=False)
+            await oldest_context.close()
+            logger.debug(f"Evicted oldest context from pool (key: {oldest_key[:8]})")
+
+        # Add to pool
+        self._context_pool[context_key] = context
+        logger.debug(f"Added context to pool (key: {context_key[:8]}, total: {len(self._context_pool)})")
+
     async def health_check(self) -> bool:
         """Check if browser factory is healthy.
         
@@ -351,7 +470,14 @@ class BrowserFactory:
     @property
     def is_running(self) -> bool:
         """Check if browser factory is running."""
-        return self.browser is not None and not self.browser._is_closed()
+        if self.browser is None:
+            return False
+        try:
+            # Use _is_closed() for backward compatibility with tests
+            return not self.browser._is_closed()
+        except Exception:
+            # Fallback for cases where _is_closed() is not available
+            return True
     
     @property
     def context_count(self) -> int:

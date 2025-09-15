@@ -68,7 +68,7 @@ def sample_validation_issues():
         ValidationIssue(
             path="/user/email",
             message="Invalid email format",
-            severity=ValidationSeverity.ERROR
+            severity=ValidationSeverity.CRITICAL
         ),
         ValidationIssue(
             path="/user/name",

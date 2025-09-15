@@ -26,17 +26,17 @@ class TestRedactor:
     def setup_method(self):
         """Set up test fixtures."""
         self.config = RedactionConfig()
-        self.redactor = Redactor(self.config)
+        self.redaction_manager = Redactor(self.config)
     
     def test_redactor_initialization(self):
         """Test redactor initialization."""
-        assert self.redactor.config == self.config
-        assert len(self.redactor.audit_trail) == 0
+        assert self.redaction_manager.config == self.config
+        assert len(self.redaction_manager.audit_trail) == 0
     
     def test_hash_redaction(self):
         """Test HASH redaction method."""
         original_value = "sensitive_data_123"
-        redacted = self.redactor._apply_redaction(
+        redacted = self.redaction_manager._apply_redaction(
             original_value, RedactionMethod.HASH, "test_pattern"
         )
         
@@ -48,7 +48,7 @@ class TestRedactor:
     def test_mask_redaction(self):
         """Test MASK redaction method."""
         original_value = "user@example.com"
-        redacted = self.redactor._apply_redaction(
+        redacted = self.redaction_manager._apply_redaction(
             original_value, RedactionMethod.MASK, "email_pattern"
         )
         
@@ -61,7 +61,7 @@ class TestRedactor:
     def test_remove_redaction(self):
         """Test REMOVE redaction method."""
         original_value = "secret_key_123"
-        redacted = self.redactor._apply_redaction(
+        redacted = self.redaction_manager._apply_redaction(
             original_value, RedactionMethod.REMOVE, "key_pattern"
         )
         
@@ -70,7 +70,7 @@ class TestRedactor:
     def test_truncate_redaction(self):
         """Test TRUNCATE redaction method."""
         original_value = "this_is_a_very_long_sensitive_string"
-        redacted = self.redactor._apply_redaction(
+        redacted = self.redaction_manager._apply_redaction(
             original_value, RedactionMethod.TRUNCATE, "long_string_pattern"
         )
         
@@ -90,7 +90,7 @@ class TestRedactor:
         }
         
         paths_to_redact = ["/user/email"]
-        redacted_data = self.redactor.redact_by_paths(data, paths_to_redact)
+        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
         
         assert redacted_data["user"]["email"] != "user@example.com"
         assert redacted_data["user"]["name"] == "John Doe"  # Unchanged
@@ -106,7 +106,7 @@ class TestRedactor:
         }
         
         paths_to_redact = ["/users/0/email", "/users/1/email"]
-        redacted_data = self.redactor.redact_by_paths(data, paths_to_redact)
+        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
         
         assert redacted_data["users"][0]["email"] != "user1@example.com"
         assert redacted_data["users"][1]["email"] != "user2@example.com"
@@ -122,7 +122,7 @@ class TestRedactor:
         }
         
         glob_patterns = ["*_email", "*_phone"]
-        redacted_data = self.redactor.redact_by_glob_patterns(data, glob_patterns)
+        redacted_data = self.redaction_manager.redact_by_glob_patterns(data, glob_patterns)
         
         assert redacted_data["user_email"] != "user@example.com"
         assert redacted_data["admin_email"] != "admin@example.com"
@@ -133,11 +133,11 @@ class TestRedactor:
         """Test that audit trail is created during redaction."""
         data = {"email": "user@example.com"}
         
-        self.redactor.redact_by_paths(data, ["/email"])
+        self.redaction_manager.redact_by_paths(data, ["/email"])
         
         # Should have audit trail entry
-        assert len(self.redactor.audit_trail) == 1
-        audit = self.redactor.audit_trail[0]
+        assert len(self.redaction_manager.audit_trail) == 1
+        audit = self.redaction_manager.audit_trail[0]
         
         assert audit.path == "/email"
         assert audit.original_value == "user@example.com"
@@ -158,7 +158,7 @@ class TestRedactor:
         }
         
         paths_to_redact = ["/level1/level2/level3/sensitive"]
-        redacted_data = self.redactor.redact_by_paths(data, paths_to_redact)
+        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
         
         assert redacted_data["level1"]["level2"]["level3"]["sensitive"] != "secret_value"
     
@@ -168,7 +168,7 @@ class TestRedactor:
         
         # Path that doesn't exist
         paths_to_redact = ["/user/nonexistent", "/invalid/path"]
-        redacted_data = self.redactor.redact_by_paths(data, paths_to_redact)
+        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
         
         # Data should be unchanged, no errors
         assert redacted_data == data
@@ -181,19 +181,19 @@ class TestRedactor:
             "remove_me": "value3"
         }
         
-        redacted_data = self.redactor.redact_by_paths(
+        redacted_data = self.redaction_manager.redact_by_paths(
             data, 
             ["/hash_me"], 
             action=RedactionMethod.HASH
         )
         
-        redacted_data = self.redactor.redact_by_paths(
+        redacted_data = self.redaction_manager.redact_by_paths(
             redacted_data,
             ["/mask_me"],
             action=RedactionMethod.MASK
         )
         
-        redacted_data = self.redactor.redact_by_paths(
+        redacted_data = self.redaction_manager.redact_by_paths(
             redacted_data,
             ["/remove_me"],
             action=RedactionMethod.REMOVE

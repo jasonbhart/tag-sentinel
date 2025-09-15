@@ -66,7 +66,7 @@ class TestDataAggregator:
         latest_data = {"page": "home", "user_id": "123"}
         events_data = [{"event": "page_view"}]
         validation_issues = []
-        
+
         # Process page data
         self.aggregator.process_page_data(
             page_url=page_url,
@@ -91,8 +91,8 @@ class TestDataAggregator:
         # Process multiple pages
         for i in range(5):
             page_url = f"https://example.com/page{i}"
-            latest_data = {"page": f"page{i}", "user_id": "123", "category": "test"}
-            events_data = [{"event": "page_view"}]
+            latest_data= {"page": f"page{i}", "user_id": "123", "category": "test"}
+            events_data= [{"event": "page_view"}]
             validation_issues = []
             
             self.aggregator.process_page_data(
@@ -149,8 +149,8 @@ class TestDataAggregator:
     def test_process_pages_with_events(self):
         """Test processing pages with events."""
         page_url = "https://example.com"
-        latest_data = {"user_id": "123"}
-        events_data = [{"event": "page_view"}, {"event": "click"}]
+        latest_data= {"user_id": "123"}
+        events_data= [{"event": "page_view"}, {"event": "click"}]
         validation_issues = []
         
         self.aggregator.process_page_data(

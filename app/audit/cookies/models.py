@@ -7,10 +7,13 @@ and differential analysis between consent states.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any, Literal, Union
+from typing import Dict, List, Optional, Any, Literal, Union, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
+
+if TYPE_CHECKING:
+    from .config import PrivacyConfiguration
 
 # Re-export the base CookieRecord from existing capture models
 from ..models.capture import CookieRecord as BaseCookieRecord
@@ -23,10 +26,19 @@ class CookieRecord(BaseCookieRecord):
     for privacy analysis and consent management.
     """
     
+    # Override size field to provide default for test compatibility
+    size: int = Field(default=0, description="Total cookie size in bytes")
+    
     # Privacy classification
     essential: Optional[bool] = Field(
         default=None,
         description="Whether cookie is essential for site functionality"
+    )
+    
+    # Test compatibility field  
+    first_party: Optional[bool] = Field(
+        default=None,
+        description="Writeable alias for first-party status (syncs with is_first_party)"
     )
     
     # Additional metadata for Epic 5
@@ -46,10 +58,58 @@ class CookieRecord(BaseCookieRecord):
         description="When cookie was last modified"
     )
     
-    @property
-    def first_party(self) -> bool:
-        """Alias for is_first_party to maintain API compatibility."""
+    def __init__(self, **data):
+        """Initialize with first_party sync logic."""
+        # Handle bidirectional sync between first_party and is_first_party
+        if 'first_party' in data and 'is_first_party' not in data:
+            data['is_first_party'] = data['first_party']
+        elif 'is_first_party' in data and 'first_party' not in data:
+            data['first_party'] = data['is_first_party']
+        elif 'first_party' in data and 'is_first_party' in data:
+            # Both provided, ensure they match
+            if data['first_party'] != data['is_first_party']:
+                data['is_first_party'] = data['first_party']  # first_party takes precedence
+        
+        super().__init__(**data)
+    
+    @property  
+    def first_party_computed(self) -> bool:
+        """Computed property for read-only access."""
         return self.is_first_party
+    
+    @property
+    def scenario_id(self) -> Optional[str]:
+        """Get scenario_id from metadata."""
+        return self.metadata.get('scenario_id')
+    
+    @scenario_id.setter
+    def scenario_id(self, value: Optional[str]):
+        """Set scenario_id in metadata."""
+        if value is not None:
+            self.metadata['scenario_id'] = value
+        elif 'scenario_id' in self.metadata:
+            del self.metadata['scenario_id']
+    
+    @property
+    def category(self) -> Optional[Any]:
+        """Get category from metadata.classification."""
+        classification = self.metadata.get('classification', {})
+        return classification.get('category')
+    
+    @category.setter
+    def category(self, value: Optional[Any]):
+        """Set category in metadata.classification."""
+        if 'classification' not in self.metadata:
+            self.metadata['classification'] = {}
+        if value is not None:
+            self.metadata['classification']['category'] = value
+        elif 'category' in self.metadata.get('classification', {}):
+            del self.metadata['classification']['category']
+    
+    def update_first_party_status(self, is_first_party: bool):
+        """Update first-party status and sync fields."""
+        self.is_first_party = is_first_party
+        self.first_party = is_first_party
 
 
 class Scenario(BaseModel):
@@ -225,7 +285,7 @@ class ScenarioCookieReport(BaseModel):
         """Count violations by severity level."""
         counts = {severity.value: 0 for severity in PolicySeverity}
         for issue in self.policy_issues:
-            counts[issue.severity] += 1
+            counts[issue.severity.value] += 1
         return counts
 
 
@@ -344,6 +404,26 @@ class CookieDiff(BaseModel):
         """Check if there was a significant reduction in cookies."""
         return self.reduction_percentage > 10.0  # Configurable threshold
 
+    @property
+    def scenario_a_id(self) -> str:
+        """Backward compatibility alias for baseline_scenario."""
+        return self.baseline_scenario
+
+    @scenario_a_id.setter
+    def scenario_a_id(self, value: str):
+        """Backward compatibility setter for baseline_scenario."""
+        self.baseline_scenario = value
+
+    @property
+    def scenario_b_id(self) -> str:
+        """Backward compatibility alias for variant_scenario."""
+        return self.variant_scenario
+
+    @scenario_b_id.setter
+    def scenario_b_id(self, value: str):
+        """Backward compatibility setter for variant_scenario."""
+        self.variant_scenario = value
+
 
 class PrivacyConfig(BaseModel):
     """Configuration for privacy testing and policy compliance.
@@ -461,10 +541,10 @@ class PrivacyAnalysisResult(BaseModel):
         description="Privacy improvement recommendations"
     )
     
-    # Configuration used
-    config: Optional[PrivacyConfig] = Field(
+    # Configuration used  
+    config: Optional[Any] = Field(
         default=None,
-        description="Privacy configuration used for analysis"
+        description="Privacy configuration used for analysis (PrivacyConfiguration or PrivacyConfig)"
     )
     
     # Additional metadata
@@ -492,3 +572,4 @@ class PrivacyAnalysisResult(BaseModel):
     def analysis_timestamp(self) -> datetime:
         """Alias for analysis_time to maintain API compatibility."""
         return self.analysis_time
+

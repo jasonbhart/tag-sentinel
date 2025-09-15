@@ -28,7 +28,7 @@ class TestScenarioComparator:
                 size=20,
                 secure=True,
                 http_only=True,
-                is_is_first_party=True
+                is_first_party=True
             ),
             CookieRecord(
                 name="tracking_id",
@@ -38,7 +38,7 @@ class TestScenarioComparator:
                 size=15,
                 secure=False,
                 http_only=False,
-                is_is_first_party=False
+                is_first_party=False
             )
         ]
         
@@ -49,6 +49,7 @@ class TestScenarioComparator:
                 value="session123",
                 domain="example.com",
                 path="/",
+                size=20,
                 secure=True,
                 http_only=True,
                 is_first_party=True,
@@ -132,10 +133,10 @@ class TestScenarioComparator:
         assert len(diff.unchanged_cookies) == 0
         
         modified_cookie = diff.modified_cookies[0]
-        assert modified_cookie["cookie_name"] == "user_pref"
-        
+        assert modified_cookie.cookie_name == "user_pref"
+
         # Check specific changes
-        changes = modified_cookie["changes"]
+        changes = modified_cookie.attribute_changes
         assert "value" in changes
         assert "secure" in changes
         assert "same_site" in changes
@@ -232,7 +233,7 @@ class TestScenarioComparator:
         # Check specific changes
         assert diff.unchanged_cookies[0].name == "essential_session"
         assert diff.added_cookies[0].name == "gpc_signal"
-        assert diff.modified_cookies[0]["cookie_name"] == "user_preferences"
+        assert diff.modified_cookies[0].cookie_name == "user_preferences"
         
         removed_names = [c.name for c in diff.removed_cookies]
         assert "google_analytics" in removed_names
@@ -242,7 +243,7 @@ class TestScenarioComparator:
         """Test comparison of full scenario reports."""
         # Create baseline report
         baseline_report = ScenarioCookieReport(
-            "baseline",
+            scenario_id="baseline",
             scenario_name="Baseline Test",
             page_url="https://example.com",
             cookies=[
@@ -262,7 +263,7 @@ class TestScenarioComparator:
         
         # Create GPC report (no tracking cookies)
         gpc_report = ScenarioCookieReport(
-            "gpc_on",
+            scenario_id="gpc_on",
             scenario_name="GPC Enabled",
             page_url="https://example.com", 
             cookies=[],  # Tracking blocked
@@ -270,19 +271,16 @@ class TestScenarioComparator:
             errors=[]
         )
         
-        # Compare reports
-        comparison = self.comparator.compare_scenario_reports(
-            baseline_report, gpc_report
-        )
-        
+        # Compare scenarios using existing method
+        diff = self.comparator.compare_scenarios(baseline_report, gpc_report)
+
         # Verify comparison result
-        assert comparison["baseline"]["scenario_name"] == "Baseline Test"
-        assert comparison["gpc_on"]["scenario_name"] == "GPC Enabled"
-        assert comparison["baseline"]["cookie_count"] == 1
-        assert comparison["gpc_on"]["cookie_count"] == 0
+        assert diff.baseline_scenario == "baseline"
+        assert diff.variant_scenario == "gpc_on"
+        assert len(baseline_report.cookies) == 1  # Baseline had tracking cookie
+        assert len(gpc_report.cookies) == 0       # GPC blocked tracking
         
-        # Check diff
-        diff = comparison["diff"]
+        # Check diff details
         assert len(diff.removed_cookies) == 1
         assert diff.removed_cookies[0].name == "tracking_cookie"
     

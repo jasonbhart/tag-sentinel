@@ -57,7 +57,7 @@ class TestValidator:
         invalid_data = {"age": 25}
         issues = self.validator.validate(invalid_data, schema)
         assert len(issues) > 0
-        assert any(issue.severity == ValidationSeverity.ERROR for issue in issues)
+        assert any(issue.severity == ValidationSeverity.CRITICAL for issue in issues)
         assert any("required" in issue.message.lower() for issue in issues)
     
     def test_validate_with_type_mismatch(self):
@@ -81,7 +81,7 @@ class TestValidator:
         
         assert len(issues) == 3
         for issue in issues:
-            assert issue.severity == ValidationSeverity.ERROR
+            assert issue.severity == ValidationSeverity.CRITICAL
             assert "type" in issue.message.lower()
     
     def test_validate_nested_objects(self):
@@ -286,7 +286,7 @@ class TestValidator:
         
         for issue in issues:
             assert isinstance(issue, ValidationIssue)
-            assert issue.severity in [ValidationSeverity.ERROR, ValidationSeverity.WARNING, ValidationSeverity.INFO]
+            assert issue.severity in [ValidationSeverity.CRITICAL, ValidationSeverity.WARNING, ValidationSeverity.INFO]
             assert len(issue.message) > 0
             assert issue.path.startswith("/")
     
@@ -310,7 +310,7 @@ class TestValidator:
         
         # Should have different severities
         severities = [issue.severity for issue in issues]
-        assert ValidationSeverity.ERROR in severities  # For missing required field
+        assert ValidationSeverity.CRITICAL in severities  # For missing required field
     
     def test_graceful_degradation_without_jsonschema(self):
         """Test graceful degradation when jsonschema is not available."""

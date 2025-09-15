@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Protocol, Set, Union, Awaitable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from ..models.capture import PageResult
 
@@ -108,10 +108,8 @@ class TagEvent(BaseModel):
         default_factory=datetime.utcnow,
         description="When this event was detected"
     )
-    
-    class Config:
-        """Pydantic configuration."""
-        use_enum_values = True
+
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class DetectorNote(BaseModel):
@@ -140,10 +138,8 @@ class DetectorNote(BaseModel):
         default_factory=datetime.utcnow,
         description="When this note was generated"
     )
-    
-    class Config:
-        """Pydantic configuration."""
-        use_enum_values = True
+
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class DetectContext(BaseModel):
@@ -194,6 +190,20 @@ class DetectContext(BaseModel):
         default=1000,
         description="Maximum events to process per page"
     )
+
+    # Event pipeline
+    detected_events: List['TagEvent'] = Field(
+        default_factory=list,
+        description="Events detected by previous detectors in the pipeline"
+    )
+
+    def add_detected_events(self, events: List['TagEvent']) -> None:
+        """Add events from a detector to the shared context.
+
+        Args:
+            events: List of detected events to add
+        """
+        self.detected_events.extend(events)
 
 
 class DetectResult(BaseModel):
@@ -451,7 +461,7 @@ class DetectorRegistry:
         try:
             detector_class = self._detectors[name]
             # Pass the registered name to the instance
-            instance = detector_class(name=name, **kwargs)
+            instance = detector_class(name, **kwargs)
             self._instances[name] = instance
             return instance
         except Exception as e:
@@ -500,7 +510,7 @@ class DetectorRegistry:
         try:
             detector_class = self._detectors[name]
             # Pass the registered name to the instance
-            instance = detector_class(name=name, **kwargs)
+            instance = detector_class(name, **kwargs)
             self._instances[name] = instance
             return instance
         except Exception as e:
@@ -660,3 +670,34 @@ def create_detect_context(detector_name: str, **kwargs) -> DetectContext:
     context_params.update(kwargs)
     
     return DetectContext(**context_params)
+
+
+async def run_detector_pipeline(detectors: List[BaseDetector],
+                                page: 'PageResult',
+                                context: DetectContext) -> Dict[str, DetectResult]:
+    """Run multiple detectors in sequence, sharing events between them.
+
+    Args:
+        detectors: List of detectors to run in order
+        page: Page result to analyze
+        context: Shared context (events will be populated)
+
+    Returns:
+        Dictionary mapping detector names to their results
+    """
+    results = {}
+
+    for detector in detectors:
+        # Run the detector
+        if hasattr(detector, 'detect_async'):
+            result = await detector.detect_async(page, context)
+        else:
+            result = detector.detect(page, context)
+
+        results[detector.name] = result
+
+        # Add detected events to shared context for subsequent analyzers
+        if result.events:
+            context.add_detected_events(result.events)
+
+    return results

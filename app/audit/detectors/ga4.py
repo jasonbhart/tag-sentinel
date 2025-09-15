@@ -46,8 +46,8 @@ from ..models.capture import PageResult, RequestLog
 class GA4Detector(BaseDetector, ResilientDetector):
     """Detector for Google Analytics 4 network requests and events."""
     
-    def __init__(self):
-        super().__init__("GA4Detector", "1.0.0")
+    def __init__(self, name: str = "GA4Detector"):
+        super().__init__(name, "1.0.0")
         self.parser = ParameterParser()
     
     @property
@@ -83,9 +83,14 @@ class GA4Detector(BaseDetector, ResilientDetector):
                 self._add_analysis_notes(result, page.url, ga4_requests)
             
             # Run MP debug validation if enabled, external validation is allowed, and not in production
-            if (not ctx.is_production and 
+            # Support both flattened config (from create_detect_context) and nested config (direct usage)
+            mp_debug_enabled = (
+                ctx.config.get("mp_debug", {}).get("enabled", False) or  # Flattened config
+                ctx.config.get("ga4", {}).get("mp_debug", {}).get("enabled", False)  # Nested config
+            )
+            if (not ctx.is_production and
                 ctx.enable_external_validation and
-                ctx.config.get("ga4", {}).get("mp_debug", {}).get("enabled", False)):
+                mp_debug_enabled):
                 with self.error_context("mp_debug_validation", page_url=page.url):
                     await self._validate_with_mp_debug_safe(result, ga4_requests, ctx)
             

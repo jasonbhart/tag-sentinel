@@ -271,26 +271,80 @@ def get_schema_v0_1() -> Dict[str, Any]:
                         "then": {
                             "anyOf": [
                                 {"required": ["vendor"]},
-                                {"required": ["url_pattern"]}
+                                {"required": ["url_pattern"]},
+                                {
+                                    "properties": {
+                                        "parameters": {
+                                            "type": "object",
+                                            "anyOf": [
+                                                {"required": ["vendor"]},
+                                                {"required": ["url_pattern"]}
+                                            ]
+                                        }
+                                    },
+                                    "required": ["parameters"]
+                                }
                             ]
                         }
                     },
                     {
                         "if": {"properties": {"type": {"const": "script_present"}}},
-                        "then": {"required": ["url_pattern"]}
+                        "then": {
+                            "anyOf": [
+                                {"required": ["url_pattern"]},
+                                {
+                                    "properties": {
+                                        "parameters": {
+                                            "type": "object",
+                                            "required": ["url_pattern"]
+                                        }
+                                    },
+                                    "required": ["parameters"]
+                                }
+                            ]
+                        }
                     },
                     {
                         "if": {"properties": {"type": {"const": "duplicate_requests"}}},
                         "then": {
-                            "properties": {
-                                "max_count": {"minimum": 1},
-                                "time_window_ms": {"minimum": 100}
-                            }
+                            "anyOf": [
+                                {
+                                    "properties": {
+                                        "max_count": {"minimum": 1},
+                                        "time_window_ms": {"minimum": 100}
+                                    }
+                                },
+                                {
+                                    "properties": {
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "max_count": {"minimum": 1},
+                                                "time_window_ms": {"minimum": 100}
+                                            }
+                                        }
+                                    },
+                                    "required": ["parameters"]
+                                }
+                            ]
                         }
                     },
                     {
                         "if": {"properties": {"type": {"const": "expression"}}},
-                        "then": {"required": ["expression"]}
+                        "then": {
+                            "anyOf": [
+                                {"required": ["expression"]},
+                                {
+                                    "properties": {
+                                        "parameters": {
+                                            "type": "object",
+                                            "required": ["expression"]
+                                        }
+                                    },
+                                    "required": ["parameters"]
+                                }
+                            ]
+                        }
                     }
                 ]
             },
@@ -548,7 +602,7 @@ def generate_example_config() -> Dict[str, Any]:
                 "description": "Verify GTM container script is present",
                 "severity": "critical",
                 "check": {
-                    "type": "presence",
+                    "type": "request_present",
                     "parameters": {
                         "url_pattern": "https://www\\.googletagmanager\\.com/gtm\\.js\\?id=GTM-",
                         "method": "GET"
@@ -565,7 +619,7 @@ def generate_example_config() -> Dict[str, Any]:
                 "description": "Ensure page_view events are not duplicated",
                 "severity": "warning",
                 "check": {
-                    "type": "duplicate",
+                    "type": "duplicate_requests",
                     "parameters": {
                         "window_seconds": 5,
                         "event_name": "page_view"

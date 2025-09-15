@@ -244,12 +244,11 @@ class TagEventPresentCheck(BaseCheck):
     def get_supported_config_keys(self) -> List[str]:
         return [
             'vendor',
-            'event_type',
-            'tag_id',
-            'event_name',
+            'name',
+            'id',
             'min_count',
             'max_count',
-            'parameters',
+            'params',
             'page_url_pattern'
         ]
     
@@ -264,24 +263,21 @@ class TagEventPresentCheck(BaseCheck):
         if 'vendor' in config:
             query = query.where('vendor', config['vendor'])
         
-        # Apply event type filter
-        if 'event_type' in config:
-            query = query.where('event_type', config['event_type'])
-        
-        # Apply tag ID filter
-        if 'tag_id' in config:
-            query = query.where('tag_id', config['tag_id'])
-        
         # Apply event name filter
-        if 'event_name' in config:
-            query = query.where('event_name', config['event_name'])
+        if 'name' in config:
+            query = query.where('name', config['name'])
+
+        # Apply tag ID filter
+        if 'id' in config:
+            query = query.where('id', config['id'])
+        
         
         # Get filtered events
         events = query.events()
         
-        # Apply parameter filters (complex, done post-query)
-        if 'parameters' in config:
-            events = self._filter_by_parameters(events, config['parameters'])
+        # Apply parameter filters
+        if 'params' in config:
+            events = self._filter_by_parameters(events, config['params'])
         
         # Apply page URL filter
         if 'page_url_pattern' in config:
@@ -325,7 +321,7 @@ class TagEventPresentCheck(BaseCheck):
             match = True
             
             for param_name, expected_value in parameter_filters.items():
-                event_value = event.parameters.get(param_name)
+                event_value = event.params.get(param_name)
                 
                 # Handle different comparison types
                 if isinstance(expected_value, dict) and 'regex' in expected_value:

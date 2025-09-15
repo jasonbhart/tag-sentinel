@@ -246,12 +246,13 @@ class JSONReportGenerator(BaseReportGenerator):
         if self.config.level == ReportLevel.VERBOSE and data.evaluation_results:
             report_dict["evaluation_results"] = [
                 {
-                    "rule_id": result.rule_id,
+                    "rule_id": result.rule.id,
                     "passed": result.passed,
                     "execution_time_ms": result.execution_time_ms,
                     "check_results": [
                         {
-                            "check_type": cr.check_type,
+                            "check_id": cr.check_id,
+                            "check_name": cr.check_name,
                             "passed": cr.passed,
                             "message": cr.message
                         }

@@ -1,0 +1,104 @@
+# Tag Sentinel Environment Configuration
+# This file defines environment-specific configurations with hierarchical inheritance
+
+version: "1.0"
+
+# Global defaults applied to all sites and environments
+defaults:
+  timeout_ms: 30000
+  max_pages: 500
+  max_concurrent: 5
+  requests_per_second: 2.0
+  expected_cookies: []
+  expected_tags: []
+  expected_events: []
+  base_urls: []
+  custom_params: {}
+
+# Environment-specific defaults (override global defaults)
+environment_defaults:
+  production:
+    max_pages: 1000
+    requests_per_second: 1.5
+    timeout_ms: 45000
+
+  staging:
+    max_pages: 200
+    requests_per_second: 3.0
+    timeout_ms: 20000
+
+# Site-specific configurations
+sites:
+  ecommerce:
+    site_id: "ecommerce"
+    defaults:
+      base_urls:
+        - "https://shop.example.com"
+      expected_cookies:
+        - "session_id"
+        - "cart_token"
+        - "_ga"
+      expected_tags:
+        - "Google Analytics"
+        - "Google Tag Manager"
+      expected_events:
+        - "page_view"
+        - "purchase"
+        - "add_to_cart"
+
+    environments:
+      production:
+        ga4_measurement_id: "G-PROD123456"
+        gtm_container_id: "GTM-PROD123"
+        base_urls:
+          - "https://shop.example.com"
+        custom_params:
+          enable_ecommerce_tracking: true
+          conversion_goals: ["purchase", "signup"]
+
+      staging:
+        ga4_measurement_id: "G-STAG123456"
+        gtm_container_id: "GTM-STAG123"
+        base_urls:
+          - "https://staging.shop.example.com"
+        custom_params:
+          enable_ecommerce_tracking: true
+          debug_mode: true
+
+  blog:
+    site_id: "blog"
+    defaults:
+      base_urls:
+        - "https://blog.example.com"
+      expected_cookies:
+        - "session_id"
+        - "_ga"
+      expected_events:
+        - "page_view"
+        - "article_read"
+
+    environments:
+      production:
+        ga4_measurement_id: "G-BLOG123456"
+        gtm_container_id: "GTM-BLOG123"
+        max_pages: 2000  # Blog has many articles
+        custom_params:
+          track_scroll_depth: true
+          content_grouping: true
+
+      staging:
+        ga4_measurement_id: "G-BLOGSTG123"
+        gtm_container_id: "GTM-BLOGSTG"
+        base_urls:
+          - "https://staging.blog.example.com"
+
+# Required tracking IDs per environment
+required_ids:
+  production:
+    - "ga4_measurement_id"
+    - "gtm_container_id"
+  staging:
+    - "ga4_measurement_id"
+    - "gtm_container_id"
+  development:
+    - "ga4_measurement_id"

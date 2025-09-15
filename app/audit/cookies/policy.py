@@ -536,8 +536,8 @@ class PolicyComplianceEngine:
                     condition = condition.replace(f"'{text}' matches '{pattern}'", str(matches).lower())
         
         try:
-            # Evaluate the condition (simplified - production would use safer evaluation)
-            condition_result = eval(condition)
+            # Safely evaluate the condition using a restricted evaluator
+            condition_result = self._safe_eval(condition)
             
             if condition_result:
                 return CookiePolicyIssue(
@@ -786,3 +786,80 @@ class PolicyComplianceEngine:
             )
         
         return recommendations
+
+    def _safe_eval(self, expression: str) -> bool:
+        """Safely evaluate a boolean expression with restricted operations.
+
+        Args:
+            expression: String expression to evaluate
+
+        Returns:
+            Boolean result of evaluation
+
+        Raises:
+            ValueError: If expression contains unsafe operations
+        """
+        import ast
+        import operator
+
+        # Define allowed operations
+        allowed_ops = {
+            ast.And: operator.and_,
+            ast.Or: operator.or_,
+            ast.Not: operator.not_,
+            ast.Eq: operator.eq,
+            ast.NotEq: operator.ne,
+            ast.Lt: operator.lt,
+            ast.LtE: operator.le,
+            ast.Gt: operator.gt,
+            ast.GtE: operator.ge,
+            ast.In: lambda x, y: x in y,
+            ast.NotIn: lambda x, y: x not in y,
+        }
+
+        # Define allowed literals
+        allowed_names = {'true', 'false', 'True', 'False'}
+
+        def _eval_node(node):
+            if isinstance(node, ast.Constant):
+                return node.value
+            elif isinstance(node, ast.Name):
+                if node.id.lower() in ['true', 'false']:
+                    return node.id.lower() == 'true'
+                else:
+                    raise ValueError(f"Unknown identifier: {node.id}")
+            elif isinstance(node, ast.BoolOp):
+                op = allowed_ops.get(type(node.op))
+                if not op:
+                    raise ValueError(f"Unsupported boolean operator: {type(node.op)}")
+                values = [_eval_node(value) for value in node.values]
+                result = values[0]
+                for value in values[1:]:
+                    result = op(result, value)
+                return result
+            elif isinstance(node, ast.UnaryOp):
+                op = allowed_ops.get(type(node.op))
+                if not op:
+                    raise ValueError(f"Unsupported unary operator: {type(node.op)}")
+                return op(_eval_node(node.operand))
+            elif isinstance(node, ast.Compare):
+                left = _eval_node(node.left)
+                for op, comparator in zip(node.ops, node.comparators):
+                    op_func = allowed_ops.get(type(op))
+                    if not op_func:
+                        raise ValueError(f"Unsupported comparison operator: {type(op)}")
+                    right = _eval_node(comparator)
+                    if not op_func(left, right):
+                        return False
+                    left = right
+                return True
+            else:
+                raise ValueError(f"Unsupported AST node type: {type(node)}")
+
+        try:
+            # Parse the expression
+            tree = ast.parse(expression, mode='eval')
+            return _eval_node(tree.body)
+        except (SyntaxError, ValueError) as e:
+            logger.warning(f"Failed to safely evaluate expression '{expression}': {e}")
+            return False

@@ -231,8 +231,8 @@ class DuplicateGroup:
 class DuplicateAnalyzer(BaseDetector):
     """Analyzer for detecting duplicate analytics events."""
     
-    def __init__(self):
-        super().__init__("DuplicateAnalyzer", "1.0.0")
+    def __init__(self, name: str = "DuplicateAnalyzer"):
+        super().__init__(name, "1.0.0")
         self.canonicalizer = None  # Will be initialized with config
     
     @property
@@ -297,19 +297,16 @@ class DuplicateAnalyzer(BaseDetector):
     
     def _get_events_from_context(self, ctx: DetectContext) -> List[TagEvent]:
         """Extract events from detection context.
-        
-        In a real implementation, this would get events from a shared context
-        or event store populated by previous detectors. For now, return empty list.
-        
+
+        Gets events from the shared context populated by previous detectors.
+
         Args:
             ctx: Detection context
-            
+
         Returns:
             List of events to analyze
         """
-        # In real implementation, this would be:
-        # return ctx.get("detected_events", [])
-        return []
+        return ctx.detected_events
     
     def _analyze_duplicates(self, events: List[TagEvent], 
                           time_window_ms: int) -> List[DuplicateGroup]:

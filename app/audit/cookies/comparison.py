@@ -551,3 +551,119 @@ class ScenarioComparator:
                 for scenario_id, diff in scenario_diffs.items()
             }
         }
+
+    def compare_cookies(
+        self,
+        baseline_cookies: List[CookieRecord],
+        variant_cookies: List[CookieRecord],
+        baseline_scenario_id: str,
+        variant_scenario_id: str,
+        page_url: str = "test://example.com"
+    ) -> 'CookieDiff':
+        """Compare two lists of cookies directly (backward compatibility method).
+
+        Args:
+            baseline_cookies: Baseline scenario cookies
+            variant_cookies: Variant scenario cookies
+            baseline_scenario_id: Baseline scenario identifier
+            variant_scenario_id: Variant scenario identifier
+            page_url: Page URL for the comparison
+
+        Returns:
+            Cookie difference analysis with scenario_a_id and scenario_b_id aliases
+        """
+        from .models import CookieDiff, CookieChange, CookieChangeType
+
+        diff = CookieDiff(
+            baseline_scenario=baseline_scenario_id,
+            variant_scenario=variant_scenario_id,
+            page_url=page_url
+        )
+
+        # Create dictionaries for efficient lookup
+        baseline_dict = {self._generate_cookie_key(c): c for c in baseline_cookies}
+        variant_dict = {self._generate_cookie_key(c): c for c in variant_cookies}
+
+        # Find added cookies (in variant but not baseline)
+        for key, cookie in variant_dict.items():
+            if key not in baseline_dict:
+                diff.added_cookies.append(cookie)
+
+        # Find removed cookies (in baseline but not variant)
+        for key, cookie in baseline_dict.items():
+            if key not in variant_dict:
+                diff.removed_cookies.append(cookie)
+
+        # Find modified and unchanged cookies
+        for key in baseline_dict:
+            if key in variant_dict:
+                baseline_cookie = baseline_dict[key]
+                variant_cookie = variant_dict[key]
+
+                # Check for attribute changes
+                changes = self._detect_cookie_changes(baseline_cookie, variant_cookie)
+                if changes:
+                    cookie_change = CookieChange(
+                        cookie_key=key,
+                        change_type=CookieChangeType.MODIFIED,
+                        cookie_name=baseline_cookie.name,
+                        cookie_domain=baseline_cookie.domain,
+                        cookie_path=baseline_cookie.path,
+                        attribute_changes=changes,
+                        baseline_value=self._cookie_to_dict(baseline_cookie),
+                        variant_value=self._cookie_to_dict(variant_cookie)
+                    )
+                    diff.modified_cookies.append(cookie_change)
+                else:
+                    diff.unchanged_cookies.append(baseline_cookie)
+
+        # Calculate reduction percentage
+        baseline_count = len(baseline_cookies)
+        variant_count = len(variant_cookies)
+
+        if baseline_count > 0:
+            diff.reduction_percentage = ((baseline_count - variant_count) / baseline_count) * 100
+
+        # Add backward compatibility aliases
+        diff.scenario_a_id = baseline_scenario_id
+        diff.scenario_b_id = variant_scenario_id
+
+        return diff
+
+    def analyze_privacy_impact(self, scenario_reports: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze privacy impact across scenarios (stub implementation)."""
+        return {
+            "privacy_score_improvement": 0.0,
+            "cookie_reduction_percentage": 0.0,
+            "tracking_blocked": False,
+            "compliance_improvement": False,
+            "recommendations": []
+        }
+
+    def generate_comparison_statistics(self, comparisons: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate statistical analysis of scenario comparisons (stub implementation)."""
+        return {
+            "total_comparisons": len(comparisons),
+            "average_cookie_reduction": 0.0,
+            "most_effective_scenario": "unknown",
+            "summary": "Statistics not yet implemented"
+        }
+
+    def generate_visualization_data(self, diff: 'CookieDiff') -> Dict[str, Any]:
+        """Generate data for visualization (stub implementation)."""
+        return {
+            "chart_type": "cookie_diff",
+            "baseline_count": len(diff.removed_cookies) + len(diff.unchanged_cookies),
+            "variant_count": len(diff.added_cookies) + len(diff.unchanged_cookies),
+            "changes": {
+                "added": len(diff.added_cookies),
+                "removed": len(diff.removed_cookies),
+                "modified": len(diff.modified_cookies)
+            }
+        }
+
+    def _cookies_match(self, cookie1: CookieRecord, cookie2: CookieRecord) -> bool:
+        """Check if two cookies are considered the same (stub implementation)."""
+        return (cookie1.name == cookie2.name and
+                cookie1.domain == cookie2.domain and
+                cookie1.path == cookie2.path)

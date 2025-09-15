@@ -134,7 +134,7 @@ class EmailAlertDispatcher(BaseAlertDispatcher):
         self.smtp_config = SMTPConfig(**config.get('smtp', {}))
         self.email_config = EmailConfig(**config.get('email', {}))
     
-    def dispatch(self, context: AlertContext) -> AlertDispatchResult:
+    async def dispatch(self, context: AlertContext) -> AlertDispatchResult:
         """Dispatch alert via email with retry logic.
         
         Args:
@@ -154,8 +154,9 @@ class EmailAlertDispatcher(BaseAlertDispatcher):
         # Format alert payload
         alert_payload = self.format_alert(context)
         
-        # Execute dispatch with retry logic
-        return asyncio.run(self._dispatch_with_retry(alert_payload, context))
+        # Execute dispatch with retry logic (now async)
+        return await self._dispatch_with_retry(alert_payload, context)
+    
     
     async def _dispatch_with_retry(self, alert_payload, context: AlertContext) -> AlertDispatchResult:
         """Execute email dispatch with retry logic."""

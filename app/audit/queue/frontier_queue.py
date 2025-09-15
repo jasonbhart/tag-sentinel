@@ -117,7 +117,15 @@ class FrontierQueue:
         
         # Priority counter for stable sorting
         self._counter = 0
-    
+
+    async def start(self):
+        """Optional start method for test compatibility.
+
+        This method does nothing but exists to satisfy test fixtures
+        that expect a start() method on queue objects.
+        """
+        pass
+
     async def put(
         self, 
         page_plan: PagePlan, 
@@ -147,7 +155,15 @@ class FrontierQueue:
             logger.debug(f"Skipping invalid URL: {page_plan.url}")
             return False
         
-        # Check for duplicates (under lock to prevent race conditions)
+        # Handle backpressure first to avoid unnecessary work
+        if wait_on_backpressure:
+            await self._handle_backpressure()
+        elif self._is_backpressure_active():
+            logger.debug(f"Queue under backpressure, dropping URL: {normalized_url}")
+            self._stats.backpressure_events += 1
+            return False
+
+        # Check for duplicates and reserve URL (under lock to prevent race conditions)
         async with self._lock:
             if self._bloom_filter:
                 # First check Bloom filter
@@ -162,40 +178,37 @@ class FrontierQueue:
                     self._stats.deduplicated_total += 1
                     logger.debug(f"Deduplicated URL: {normalized_url}")
                     return False
-        
-        # Handle backpressure
-        if wait_on_backpressure:
-            await self._handle_backpressure()
-        elif self._is_backpressure_active():
-            logger.debug(f"Queue under backpressure, dropping URL: {normalized_url}")
-            self._stats.backpressure_events += 1
-            return False
-        
+
+            # Reserve URL immediately to prevent race condition
+            # This ensures no other thread can add the same URL after our check
+            self._seen_urls.add(normalized_url)
+            if self._bloom_filter:
+                self._bloom_filter.add(normalized_url)
+
         # Create queue item with priority and counter for stable sorting
         queue_item = QueueItem(
             page_plan=page_plan,
             priority=priority
         )
-        
+
         try:
             # Use counter to ensure stable priority ordering
             self._counter += 1
             await self._queue.put((-priority.value, self._counter, queue_item))
-            
-            # Track URL as seen (under lock to prevent race conditions)
-            async with self._lock:
-                self._seen_urls.add(normalized_url)
-                if self._bloom_filter:
-                    self._bloom_filter.add(normalized_url)
-            
+
             # Update statistics
             self._stats.enqueued_total += 1
             self._stats.queue_size_max = max(self._stats.queue_size_max, self._queue.qsize())
-            
+
             logger.debug(f"Enqueued URL with priority {priority.name}: {normalized_url}")
             return True
-            
+
         except asyncio.QueueFull:
+            # Queue is full - need to unreserve the URL since we already added it to seen_urls
+            async with self._lock:
+                self._seen_urls.discard(normalized_url)
+                # Note: We don't remove from bloom filter as it's append-only and false positives are acceptable
+
             logger.warning(f"Queue full, dropping URL: {normalized_url}")
             self._stats.backpressure_events += 1
             return False

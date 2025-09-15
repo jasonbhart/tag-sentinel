@@ -8,7 +8,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from ..models.capture import PageResult
 from .base import DetectorRegistry
@@ -187,7 +187,8 @@ class DetectorConfig(BaseModel):
     duplicates: DuplicateConfig = Field(default_factory=DuplicateConfig)
     sequencing: SequencingConfig = Field(default_factory=SequencingConfig)
     
-    @validator('environment')
+    @field_validator('environment')
+    @classmethod
     def validate_environment(cls, v):
         """Validate environment name."""
         allowed_envs = ['development', 'staging', 'production', 'test']

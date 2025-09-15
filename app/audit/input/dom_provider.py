@@ -139,9 +139,9 @@ class DomLinkProvider:
             logger.debug(f"Navigating to page: {source_url}")
             await page.goto(source_url, wait_until="domcontentloaded")
             
-            # Wait for load condition
-            await self._wait_for_load_condition(page, source_url)
-            
+            # Wait for load condition and capture timing
+            load_state_info = await self._wait_for_load_condition(page, source_url)
+
             # Extract links from the page
             links = await self._extract_links_from_page(page, source_url)
             
@@ -151,7 +151,7 @@ class DomLinkProvider:
             # Process each discovered link
             for link_info in links:
                 async for page_plan in self._process_link(
-                    link_info, source_url, depth, seen_urls
+                    link_info, source_url, depth, seen_urls, load_state_info
                 ):
                     yield page_plan
                     
@@ -184,26 +184,32 @@ class DomLinkProvider:
     
     async def _wait_for_load_condition(self, page: 'Page', url: str):
         """Wait for page load condition based on configured strategy.
-        
+
         Args:
             page: Playwright page object
             url: URL being loaded (for logging)
+
+        Returns:
+            Dict with load state information including timing
         """
+        import time
+        start_time = time.time()
+
         try:
             if self.load_wait_strategy == LoadWaitStrategy.NETWORKIDLE:
                 await page.wait_for_load_state("networkidle", timeout=self.load_wait_timeout * 1000)
-                
+
             elif self.load_wait_strategy == LoadWaitStrategy.SELECTOR:
                 if not self.load_wait_selector:
                     raise DomProviderError("load_wait_selector required for selector wait strategy")
                 await page.wait_for_selector(
-                    self.load_wait_selector, 
+                    self.load_wait_selector,
                     timeout=self.load_wait_timeout * 1000
                 )
-                
+
             elif self.load_wait_strategy == LoadWaitStrategy.TIMEOUT:
                 await asyncio.sleep(min(self.load_wait_timeout, 10))  # Cap at 10 seconds
-                
+
             elif self.load_wait_strategy == LoadWaitStrategy.CUSTOM:
                 if not self.load_wait_js:
                     raise DomProviderError("load_wait_js required for custom wait strategy")
@@ -211,11 +217,33 @@ class DomLinkProvider:
                     self.load_wait_js,
                     timeout=self.load_wait_timeout * 1000
                 )
-                
+
+            end_time = time.time()
+            wait_duration = round((end_time - start_time) * 1000)  # Convert to ms
+
+            return {
+                'load_strategy': self.load_wait_strategy,
+                'wait_ms': wait_duration,
+                'selector': self.load_wait_selector if self.load_wait_strategy == LoadWaitStrategy.SELECTOR else None,
+                'timeout_ms': self.load_wait_timeout * 1000,
+                'success': True
+            }
+
         except Exception as e:
+            end_time = time.time()
+            wait_duration = round((end_time - start_time) * 1000)
             self._stats["load_timeouts"] += 1
             logger.warning(f"Load wait timeout for {url}: {e}")
-            # Continue anyway - we may still extract some links
+
+            # Return load state info even on timeout
+            return {
+                'load_strategy': self.load_wait_strategy,
+                'wait_ms': wait_duration,
+                'selector': self.load_wait_selector if self.load_wait_strategy == LoadWaitStrategy.SELECTOR else None,
+                'timeout_ms': self.load_wait_timeout * 1000,
+                'success': False,
+                'error': str(e)
+            }
     
     async def _extract_links_from_page(
         self, 
@@ -343,16 +371,18 @@ class DomLinkProvider:
         link_info: Dict[str, Any],
         source_url: str,
         depth: int,
-        seen_urls: Set[str]
+        seen_urls: Set[str],
+        load_state_info: Dict[str, Any] = None
     ) -> AsyncIterator[PagePlan]:
         """Process a single discovered link.
-        
+
         Args:
             link_info: Link information dictionary
             source_url: URL where link was discovered
             depth: Depth level for the link
             seen_urls: Set of seen URLs
-            
+            load_state_info: Load state information from the source page
+
         Yields:
             PagePlan if link is valid and not duplicate
         """
@@ -393,6 +423,10 @@ class DomLinkProvider:
                 "link_type": link_info.get('type', 'standard'),
                 "source_page": source_url
             }
+
+            # Include load state information if available
+            if load_state_info:
+                metadata["load_state"] = load_state_info
             
             page_plan = PagePlan(
                 url=normalized_url,

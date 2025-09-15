@@ -140,32 +140,61 @@ class HostRateLimiter:
         # Backoff state
         self._backoff = BackoffState()
         self._backoff_lock = asyncio.Lock()
-        
+
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0
+        self._circuit_failure_threshold = 10  # Open circuit after 10 consecutive failures
+        self._circuit_timeout = 300.0  # Keep circuit open for 5 minutes
+
         # Statistics
         self._stats = {
             "total_requests": 0,
             "rate_limited": 0,
             "concurrent_limited": 0,
             "backoff_events": 0,
-            "retry_after_events": 0
+            "retry_after_events": 0,
+            "circuit_breaker_events": 0
         }
     
+    def is_circuit_open(self) -> bool:
+        """Check if circuit breaker is currently open.
+
+        Returns:
+            True if circuit is open (requests should be rejected)
+        """
+        current_time = time.time()
+        if current_time >= self._circuit_open_until:
+            # Circuit timeout has expired, reset if it was open
+            if self._circuit_open_until > 0:
+                self._circuit_open_until = 0.0
+                self._consecutive_failures = 0
+                logger.info(f"Circuit breaker for {self.host} reset after timeout")
+            return False
+        return True
+
     async def acquire(self, timeout: Optional[float] = None) -> bool:
         """Acquire permission to make a request.
-        
+
         Args:
             timeout: Maximum time to wait for permission
-            
+
         Returns:
-            True if permission granted, False if timeout
+            True if permission granted, False if timeout or circuit open
         """
+        # Check circuit breaker first
+        if self.is_circuit_open():
+            self._stats["circuit_breaker_events"] += 1
+            logger.debug(f"Circuit breaker open for {self.host}, rejecting request")
+            return False
+
         start_time = time.time()
-        
+
         while True:
             # Check timeout
             if timeout and (time.time() - start_time) >= timeout:
                 return False
-            
+
             # Check backoff delay
             async with self._backoff_lock:
                 backoff_delay = self._backoff.calculate_delay(self.base_delay, self.max_delay)
@@ -230,13 +259,19 @@ class HostRateLimiter:
                 logger.debug(f"Host {self.host} request released ({self._concurrent_requests}/{self.max_concurrent})")
     
     async def record_success(self):
-        """Record a successful request (resets backoff)."""
+        """Record a successful request (resets backoff and circuit breaker)."""
         async with self._backoff_lock:
             if self._backoff.consecutive_failures > 0:
                 logger.debug(f"Host {self.host} backoff reset after success")
                 self._backoff.consecutive_failures = 0
                 self._backoff.current_delay = self.base_delay
                 self._backoff.reason = None
+
+            # Reset circuit breaker state on success
+            if self._consecutive_failures > 0:
+                logger.debug(f"Host {self.host} circuit breaker reset after success")
+                self._consecutive_failures = 0
+                self._circuit_open_until = 0.0
     
     async def record_failure(
         self, 
@@ -253,12 +288,24 @@ class HostRateLimiter:
             self._backoff.consecutive_failures += 1
             self._backoff.last_failure_time = time.time()
             self._backoff.reason = reason
-            
+
+            # Update circuit breaker state
+            self._consecutive_failures += 1
+
+            # Check if we should open the circuit breaker
+            if self._consecutive_failures >= self._circuit_failure_threshold:
+                self._circuit_open_until = time.time() + self._circuit_timeout
+                logger.warning(
+                    f"Circuit breaker opened for {self.host} after {self._consecutive_failures} "
+                    f"consecutive failures. Blocked for {self._circuit_timeout}s"
+                )
+                self._stats["circuit_breaker_events"] += 1
+
             if retry_after:
                 self._backoff.retry_after_until = time.time() + retry_after
                 self._stats["retry_after_events"] += 1
                 logger.info(f"Host {self.host} explicit retry-after: {retry_after}s")
-            
+
             self._stats["backoff_events"] += 1
             delay = self._backoff.calculate_delay(self.base_delay, self.max_delay)
             logger.info(f"Host {self.host} backoff triggered: {reason.value}, delay: {delay:.2f}s")

@@ -1,0 +1,75 @@
+# Tag Sentinel Capture Configuration
+# This file configures browser capture behavior
+
+# Environment settings
+environment: "production"  # production, staging, development, test
+
+# Browser configuration
+browser:
+  engine: "chromium"  # chromium, firefox, webkit
+  headless: true
+  window_width: 1366
+  window_height: 768
+  device_scale_factor: 1
+  user_agent: null
+  timezone: null
+  locale: "en-US"
+  ignore_https_errors: false
+  java_script_enabled: true
+  enable_context_reuse: false  # Enable context pooling for efficiency
+
+# Capture engine settings
+engine:
+  max_concurrent_pages: 5
+  page_timeout_ms: 30000
+
+  # Default page session configuration
+  default_wait_strategy: "networkidle"  # networkidle, load, domcontentloaded
+  default_wait_timeout_ms: 30000
+  enable_network_capture: true
+  enable_console_capture: true
+  enable_cookie_capture: true
+  redact_cookie_values: true
+  filter_console_noise: true
+
+  # Artifacts configuration
+  artifacts_enabled: false
+  artifacts_dir: null  # Will use system temp if enabled and null
+  take_screenshots: false
+  screenshot_on_error: true
+  enable_har: false
+  enable_trace: false
+
+  # Error handling
+  retry_attempts: 3
+  retry_delay_ms: 1000
+  continue_on_error: true
+
+  # Performance settings
+  memory_limit_mb: null  # No limit if null
+  cleanup_interval_pages: 50
+  enable_batch_processing: true
+  max_batch_size: 10
+
+# Environment-specific overrides
+environments:
+  development:
+    browser:
+      headless: false
+    engine:
+      artifacts_enabled: true
+      take_screenshots: true
+      enable_har: true
+      max_concurrent_pages: 2
+
+  staging:
+    engine:
+      artifacts_enabled: true
+      screenshot_on_error: true
+
+  test:
+    browser:
+      headless: true
+    engine:
+      max_concurrent_pages: 1
+      artifacts_enabled: false

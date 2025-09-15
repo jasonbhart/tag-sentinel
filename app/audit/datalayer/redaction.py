@@ -6,8 +6,10 @@ targeting with JSON Pointer paths and glob patterns.
 """
 
 import hashlib
+import hmac
 import re
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from pathlib import Path
@@ -722,14 +724,28 @@ class AdvancedPatternDetector:
 class Redactor:
     """Redacts sensitive data from dataLayer snapshots."""
     
-    def __init__(self, config: RedactionConfig | None = None):
+    def __init__(self, config: RedactionConfig | None = None, hmac_key: bytes | None = None):
         """Initialize redactor with configuration.
-        
+
         Args:
             config: Redaction configuration
+            hmac_key: Optional HMAC key for secure hashing. If None, generates a secure key.
         """
         self.config = config or RedactionConfig()
         self.path_matcher = PathMatcher()
+
+        # Initialize HMAC key for secure hashing
+        if hmac_key is None:
+            # Try to get from environment variable first
+            env_key = os.environ.get('TAG_SENTINEL_REDACTION_KEY')
+            if env_key:
+                self.hmac_key = env_key.encode()
+            else:
+                # Generate a secure random key (32 bytes for SHA-256)
+                self.hmac_key = os.urandom(32)
+                logger.warning("Using auto-generated HMAC key for redaction. Consider setting TAG_SENTINEL_REDACTION_KEY environment variable for consistency across runs.")
+        else:
+            self.hmac_key = hmac_key
         self.audit_trail: List[RedactionAuditEntry] = []
         
         # Initialize advanced pattern detection
@@ -976,9 +992,9 @@ class Redactor:
             return "[REDACTED]"
         
         elif method == RedactionMethod.HASH:
-            # Convert to string and hash
+            # Convert to string and hash using HMAC-SHA-256 for security
             str_value = str(value)
-            hash_obj = hashlib.sha256(str_value.encode())
+            hash_obj = hmac.new(self.hmac_key, str_value.encode(), hashlib.sha256)
             return f"[HASH:{hash_obj.hexdigest()[:16]}]"
         
         elif method == RedactionMethod.MASK:

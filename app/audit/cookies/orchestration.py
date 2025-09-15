@@ -93,7 +93,6 @@ class ScenarioOrchestrator:
         
         # Execution state
         self.execution_results: Dict[str, ScenarioExecutionResult] = {}
-        self.baseline_cookies: Optional[List[CookieRecord]] = None
         
         # Ensure artifacts directory exists
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -456,7 +455,7 @@ async def execute_privacy_scenarios(
         analysis = PrivacyAnalysisResult(
             page_url=page_url,
             scenario_reports=scenario_reports,
-            config=None  # TODO: Convert PrivacyConfiguration to PrivacyConfig if needed
+            config=config  # Include the effective PrivacyConfiguration
         )
         
         # Add execution metadata

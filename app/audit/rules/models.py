@@ -27,17 +27,19 @@ class RuleScope(str, Enum):
 
 class CheckType(str, Enum):
     """Types of rule checks available."""
+    # Concrete, registered check types
     REQUEST_PRESENT = "request_present"
+    REQUEST_ABSENT = "request_absent"
     SCRIPT_PRESENT = "script_present"
+    TAG_EVENT_PRESENT = "tag_event_present"
+    COOKIE_PRESENT = "cookie_present"
+    CONSOLE_MESSAGE_PRESENT = "console_message_present"
     DUPLICATE_REQUESTS = "duplicate_requests"
-    RELATIVE_ORDER = "relative_order"
+    SEQUENCE_ORDER = "sequence_order"
+    RELATIVE_ORDER = "relative_order"  # Keep for backward compatibility
     COOKIE_POLICY = "cookie_policy"
     EXPRESSION = "expression"
-    
-    # Test-expected values
-    PRESENCE = "presence"
-    ABSENCE = "absence"
-    DUPLICATE = "duplicate"
+    JSONPATH = "jsonpath"
 
 
 class AlertChannelType(str, Enum):
@@ -220,15 +222,17 @@ class Rule(BaseModel):
     @property
     def scope(self) -> RuleScope:
         """Determine rule scope based on check type."""
-        # Run-scoped checks operate across all pages
+        # Run-scoped checks operate across all pages in a crawl
         run_scoped_checks = {
-            CheckType.DUPLICATE_REQUESTS,
-            CheckType.RELATIVE_ORDER
+            # Duplicate detection needs to compare across pages
+            "duplicate_requests", "request_duplicates", "event_duplicates", "cookie_duplicates",
+            # Temporal sequence checks that span pages
+            "relative_order", "relative_timing", "sequence_order",
         }
-        
+
         if self.check.type in run_scoped_checks:
             return RuleScope.RUN
-        
+
         return RuleScope.PAGE
 
 
@@ -524,12 +528,12 @@ class AlertConfig(BaseModel):
     @property
     def requires_webhook_config(self) -> bool:
         """Check if webhook configuration is required."""
-        return self.channel_type == AlertChannelType.WEBHOOK
+        return AlertChannelType.WEBHOOK in self.channels
 
     @property
     def requires_email_config(self) -> bool:
         """Check if email configuration is required."""
-        return self.channel_type == AlertChannelType.EMAIL
+        return AlertChannelType.EMAIL in self.channels
 
 
 class AlertPayload(BaseModel):
@@ -588,16 +592,16 @@ class AlertPayload(BaseModel):
             "environment": self.environment,
             "summary": {
                 "total_failures": self.summary.total_failures,
-                "critical_failures": self.summary.critical_count,
-                "warning_failures": self.summary.warning_count,
-                "info_failures": self.summary.info_count,
+                "critical_failures": self.summary.critical_failures,
+                "warning_failures": self.summary.warning_failures,
+                "info_failures": self.summary.info_failures,
                 "success_rate": self.summary.success_rate
             },
             "failures": [
                 {
-                    "rule_id": f.rule_id,
+                    "rule_id": f.check_id,
                     "severity": f.severity.value,
-                    "scope": f.scope.value,
+                    "scope": f.scope.value if f.scope else None,
                     "page_url": f.page_url,
                     "message": f.message,
                     "timestamp": f.timestamp.isoformat()

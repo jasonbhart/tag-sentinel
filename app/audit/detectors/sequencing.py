@@ -112,8 +112,8 @@ class SequencingViolation:
 class SequencingAnalyzer(BaseDetector):
     """Analyzer for tag loading sequence and timing dependencies."""
     
-    def __init__(self):
-        super().__init__("SequencingAnalyzer", "1.0.0")
+    def __init__(self, name: str = "SequencingAnalyzer"):
+        super().__init__(name, "1.0.0")
         self.default_rules = self._create_default_rules()
     
     @property
@@ -172,15 +172,16 @@ class SequencingAnalyzer(BaseDetector):
     
     def _get_events_from_context(self, ctx: DetectContext) -> List[TagEvent]:
         """Extract events from detection context.
-        
+
+        Gets events from the shared context populated by previous detectors.
+
         Args:
             ctx: Detection context
-            
+
         Returns:
             List of events to analyze
         """
-        # In real implementation, this would get events from shared context
-        return []
+        return ctx.detected_events
     
     def _get_sequencing_rules(self, ctx: DetectContext) -> List[SequencingRule]:
         """Get sequencing rules from configuration.

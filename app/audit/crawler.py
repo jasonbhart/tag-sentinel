@@ -204,22 +204,35 @@ class Crawler:
     
     async def _enqueue_page_plan(self, page_plan: PagePlan, priority: QueuePriority):
         """Enqueue a PagePlan if it passes scope checks.
-        
+
         Args:
             page_plan: PagePlan to enqueue
             priority: Queue priority for the page
         """
+        # Track discovered URLs (before scope/limit checks)
+        self._metrics.stats.urls_discovered += 1
+
+        # Track unique hosts
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(str(page_plan.url))
+            if parsed.netloc:
+                self._metrics.stats.unique_hosts.add(parsed.netloc.lower())
+        except Exception:
+            # If URL parsing fails, still continue with processing
+            pass
+
         # Check scope
         if not self.scope_matcher.is_in_scope(str(page_plan.url)):
             self._metrics.stats.urls_skipped += 1
             logger.debug(f"URL out of scope: {page_plan.url}")
             return
-        
+
         # Check limits
         if self._metrics.stats.urls_processed >= self.config.max_pages:
             logger.info(f"Reached max pages limit: {self.config.max_pages}")
             return
-        
+
         # Enqueue
         success = await self.frontier_queue.put(page_plan, priority)
         if success:
@@ -314,11 +327,41 @@ class Crawler:
             logger.error(f"Error processing page {url}: {e}")
             self._metrics.add_error(url, "processing_error", str(e))
             self._metrics.stats.urls_failed += 1
+
+            # Record error with rate limiter for backoff calculations
+            error_type = self._classify_error(e)
+            await self.rate_limiter.record_error(url, error_type)
         finally:
             # Mark as processed
             async with self._lock:
                 self._processing_urls.discard(url)
                 self._processed_urls.add(url)
+
+    def _classify_error(self, error: Exception) -> str:
+        """Classify an error for rate limiter backoff calculations.
+
+        Args:
+            error: The exception that occurred
+
+        Returns:
+            Error type string for rate limiter
+        """
+        error_name = type(error).__name__.lower()
+        error_str = str(error).lower()
+
+        # Network-related errors
+        if any(term in error_str for term in ['timeout', 'timed out']):
+            return 'timeout'
+        elif any(term in error_str for term in ['connection', 'network', 'dns', 'resolve']):
+            return 'network'
+        elif 'http' in error_str and any(code in error_str for code in ['500', '502', '503', '504']):
+            return 'server_error'
+        elif 'http' in error_str and any(code in error_str for code in ['429']):
+            return 'rate_limited'
+        elif 'http' in error_str and any(code in error_str for code in ['404', '403', '401']):
+            return 'client_error'
+        else:
+            return 'unknown'
     
     async def _process_queue(self) -> AsyncIterator[PagePlan]:
         """Process the frontier queue and yield PagePlans for browser capture.

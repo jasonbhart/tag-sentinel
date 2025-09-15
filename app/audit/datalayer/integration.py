@@ -216,10 +216,12 @@ class DataLayerBrowserIntegrator:
             
             # Perform the actual capture
             dl_context = DLContext(
-                page_url=context.page_url,
-                capture_method="browser_integration",
-                timestamp=datetime.utcnow(),
-                metadata=context.metadata
+                env="production",  # Default environment
+                data_layer_object="dataLayer",  # Default object name
+                max_depth=6,
+                max_entries=500,
+                redact_paths=[],
+                site_config=context.metadata or {}
             )
             
             # Use the snapshotter through the service
@@ -232,7 +234,7 @@ class DataLayerBrowserIntegrator:
                 
                 # Store timing data
                 context.timing_data['total_capture_ms'] = capture_time
-                context.timing_data['datalayer_size_bytes'] = len(str(snapshot.latest_data))
+                context.timing_data['datalayer_size_bytes'] = len(str(snapshot.latest)) if snapshot.latest else 0
                 
                 logger.debug(f"DataLayer capture completed for {context.page_url} in {capture_time:.1f}ms")
                 return snapshot
@@ -442,7 +444,7 @@ class DataLayerBrowserIntegrator:
                 # Perform capture using the page object
                 snapshot = await snapshotter.capture_from_page(context.page, dl_context)
                 
-                if snapshot and (snapshot.latest_data or snapshot.events_data):
+                if snapshot and (snapshot.latest or snapshot.events):
                     return snapshot
                 else:
                     logger.warning(f"Empty snapshot captured for {context.page_url} (attempt {attempt + 1})")
@@ -488,11 +490,11 @@ class DataLayerBrowserIntegrator:
                 # Create minimal snapshot
                 snapshot = DataLayerSnapshot(
                     page_url=context.page_url,
-                    timestamp=datetime.utcnow(),
-                    latest_data=basic_data,
-                    events_data=[],
-                    capture_method="fallback",
-                    success=True
+                    capture_time=datetime.utcnow(),
+                    exists=True,
+                    latest=basic_data,
+                    events=[],
+                    object_name="dataLayer"
                 )
                 
                 logger.info(f"Fallback capture successful for {context.page_url}")

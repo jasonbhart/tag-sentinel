@@ -237,7 +237,7 @@ class TestSnapshotter:
         mock_page.evaluate.return_value = None
         mock_page.url = "https://example.com"
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
@@ -256,7 +256,7 @@ class TestSnapshotter:
         mock_page.evaluate.return_value = mock_datalayer
         mock_page.url = "https://example.com"
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
@@ -278,7 +278,7 @@ class TestSnapshotter:
         mock_page.evaluate.return_value = mock_datalayer
         mock_page.url = "https://example.com"
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
@@ -297,7 +297,7 @@ class TestSnapshotter:
         mock_page.evaluate.side_effect = asyncio.TimeoutError("Page timeout")
         mock_page.url = "https://example.com"
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
@@ -314,7 +314,7 @@ class TestSnapshotter:
         mock_page.evaluate.side_effect = Exception("JavaScript error: ReferenceError")
         mock_page.url = "https://example.com"
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         

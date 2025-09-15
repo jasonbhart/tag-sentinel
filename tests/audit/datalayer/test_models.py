@@ -110,13 +110,13 @@ class TestValidationIssue:
         issue = ValidationIssue(
             path="/user/id",
             message="Invalid user ID format",
-            severity=ValidationSeverity.ERROR,
+            severity=ValidationSeverity.CRITICAL,
             schema_path="/properties/user/properties/id"
         )
         
         assert issue.path == "/user/id"
         assert issue.message == "Invalid user ID format"
-        assert issue.severity == ValidationSeverity.ERROR
+        assert issue.severity == ValidationSeverity.CRITICAL
         assert issue.is_error
         assert not issue.is_warning
     
@@ -125,7 +125,7 @@ class TestValidationIssue:
         error_issue = ValidationIssue(
             path="/test",
             message="Test error",
-            severity=ValidationSeverity.ERROR
+            severity=ValidationSeverity.CRITICAL
         )
         
         warning_issue = ValidationIssue(
@@ -157,7 +157,7 @@ class TestValidationIssue:
         issue = ValidationIssue(
             path="/ecommerce/purchase",
             message="Missing required field",
-            severity=ValidationSeverity.ERROR,
+            severity=ValidationSeverity.CRITICAL,
             context={"expected_type": "object", "actual_type": "null"}
         )
         
@@ -223,7 +223,7 @@ class TestDLResult:
     
     def test_result_with_validation_issues(self):
         """Test result with validation issues."""
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
             url="https://example.com",
             raw_data={"test": "value"},
@@ -234,7 +234,7 @@ class TestDLResult:
             ValidationIssue(
                 path="/test",
                 message="Invalid format",
-                severity=ValidationSeverity.ERROR
+                severity=ValidationSeverity.CRITICAL
             ),
             ValidationIssue(
                 path="/other",
@@ -252,7 +252,7 @@ class TestDLResult:
     
     def test_result_with_processing_metadata(self):
         """Test result with processing metadata."""
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
             url="https://example.com",
             raw_data={"user_id": "123"},
@@ -269,7 +269,7 @@ class TestDLResult:
     
     def test_result_summary_statistics(self):
         """Test result summary statistics."""
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
             url="https://example.com",
             raw_data={"test": "value"},
@@ -277,8 +277,8 @@ class TestDLResult:
         )
         
         issues = [
-            ValidationIssue(path="/test1", message="Error 1", severity=ValidationSeverity.ERROR),
-            ValidationIssue(path="/test2", message="Error 2", severity=ValidationSeverity.ERROR),
+            ValidationIssue(path="/test1", message="Error 1", severity=ValidationSeverity.CRITICAL),
+            ValidationIssue(path="/test2", message="Error 2", severity=ValidationSeverity.CRITICAL),
             ValidationIssue(path="/test3", message="Warning 1", severity=ValidationSeverity.WARNING),
         ]
         

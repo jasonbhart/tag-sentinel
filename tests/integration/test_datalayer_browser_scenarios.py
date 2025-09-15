@@ -112,7 +112,7 @@ class TestSinglePageApplicationScenarios:
         mock_page.url = "https://example.com/dynamic"
         mock_page.evaluate.return_value = initial_datalayer
         
-        context = DLContext(url="https://example.com/dynamic")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/dynamic"})
         initial_result = await integration_service.capture_and_validate(mock_page, context)
         
         # Test updated capture (simulating later capture)
@@ -315,7 +315,7 @@ class TestEcommerceScenarios:
         mock_page.url = "https://shop.example.com/checkout/success"
         mock_page.evaluate.return_value = enhanced_ecommerce_data
         
-        context = DLContext(url="https://shop.example.com/checkout/success")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://shop.example.com/checkout/success"})
         result = await integration_service.capture_and_validate(mock_page, context)
         
         # Verify successful capture

@@ -49,13 +49,15 @@ class GPCSimulator:
     
     def __init__(self, config: Optional[GPCConfig] = None):
         """Initialize GPC simulator.
-        
+
         Args:
             config: GPC configuration settings
         """
         self.config = config or GPCConfig()
         self.is_enabled = False
         self.injected_contexts = set()
+        # Track specific route handlers for safe removal
+        self.context_handlers: Dict[int, callable] = {}
         
         # JavaScript to inject for GPC API simulation
         self.gpc_javascript = """
@@ -131,11 +133,14 @@ class GPCSimulator:
         
         # Enable request interception
         await context.route("**/*", inject_gpc_header)
-        
+
+        # Store the handler for safe removal later
+        self.context_handlers[context_id] = inject_gpc_header
+
         # Inject JavaScript API if enabled
         if self.config.simulate_javascript_api:
             await context.add_init_script(self.gpc_javascript)
-        
+
         self.injected_contexts.add(context_id)
         self.is_enabled = True
         
@@ -150,10 +155,13 @@ class GPCSimulator:
         context_id = id(context)
         if context_id not in self.injected_contexts:
             return
-        
-        # Remove request interception
-        await context.unroute("**/*")
-        
+
+        # Remove only our specific GPC handler, not all routes
+        if context_id in self.context_handlers:
+            handler = self.context_handlers[context_id]
+            await context.unroute("**/*", handler)
+            del self.context_handlers[context_id]
+
         self.injected_contexts.discard(context_id)
         
         logger.info("GPC simulation disabled for context")

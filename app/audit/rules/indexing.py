@@ -1225,7 +1225,7 @@ class QueryAggregator:
         pages = self._apply_filters(self.indexes.pages.pages, filters or [])
         
         load_times = [p.load_time_ms for p in pages if p.load_time_ms is not None]
-        request_counts = [len(p.request_timeline) for p in pages]
+        request_counts = [len(p.network_requests) for p in pages]
         
         if not load_times:
             return {
@@ -1284,7 +1284,8 @@ class AuditQuery:
     
     def get_failed_requests(self) -> List[RequestLog]:
         """Get all failed requests."""
-        return self.query().filter('status', 'ne', 'success').requests()
+        from app.audit.models.capture import RequestStatus
+        return self.query().filter('status', 'ne', RequestStatus.SUCCESS).requests()
     
     def get_third_party_cookies(self) -> List[CookieRecord]:
         """Get all third-party cookies."""

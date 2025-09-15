@@ -575,7 +575,6 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
         return RuleResults(
             summary=summary,
             failures=all_failures,
-            rule_results=rule_results,
             evaluation_time=context.end_time or datetime.utcnow(),
             context_info={
                 'environment': context.environment,
@@ -631,29 +630,73 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
         
         return True
     
+    def _validate_concrete_check_type(self, check_type: str) -> str:
+        """Validate and map check type aliases to concrete registered types."""
+        # Map enum aliases to registered check types
+        type_mapping = {
+            # Duplicate checks
+            "duplicate_requests": "request_duplicates",
+
+            # Temporal checks
+            "relative_order": "relative_timing",  # Keep for backward compatibility
+
+            # Privacy checks - map generic to specific
+            "cookie_policy": "cookie_security",  # Default to security check
+
+            # Script presence - delegate to request_present with script filter
+            "script_present": "request_present",
+        }
+
+        # Return mapped type or original if no mapping needed
+        concrete_type = type_mapping.get(check_type, check_type)
+
+        # Validate that the concrete type is actually registered
+        if not check_registry.get_check_class(concrete_type):
+            available_types = list(check_registry._checks.keys())
+            raise ValueError(f"Unknown check type: {check_type} (mapped to {concrete_type}). Available types: {available_types}")
+
+        return concrete_type
+    
     def _get_or_create_check(self, rule: Rule) -> BaseCheck:
         """Get or create check instance for rule."""
         cache_key = f"{rule.check.type}:{rule.id}"
-        
+
         if cache_key not in self.check_cache:
-            check_class = check_registry.get_check_class(rule.check.type)
+            # Validate concrete check type
+            concrete_check_id = self._validate_concrete_check_type(rule.check.type)
+            check_class = check_registry.get_check_class(concrete_check_id)
             if not check_class:
-                raise ValueError(f"Unknown check type: {rule.check.type}")
-            
+                raise ValueError(f"Unknown check type: {rule.check.type} (mapped to {concrete_check_id})")
+
             check_instance = check_class(
                 check_id=rule.id,
                 name=rule.name,
                 description=rule.description
             )
-            
+
+            # Apply special configuration for aliased check types
+            final_config = self._apply_alias_config_defaults(rule.check.type, rule.check.config)
+
             # Validate configuration
-            config_errors = check_instance.validate_config(rule.check.config)
+            config_errors = check_instance.validate_config(final_config)
             if config_errors:
                 raise ValueError(f"Invalid check configuration: {'; '.join(config_errors)}")
-            
+
             self.check_cache[cache_key] = check_instance
-        
+
         return self.check_cache[cache_key]
+
+    def _apply_alias_config_defaults(self, original_check_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply default configuration for aliased check types."""
+        final_config = dict(config) if config else {}
+
+        # Apply defaults based on the original check type
+        if original_check_type == "script_present":
+            # Default to looking for script resources if not specified
+            if 'resource_type' not in final_config:
+                final_config['resource_type'] = 'script'
+
+        return final_config
     
     def _create_check_context(self, rule: Rule, context: EvaluationContext) -> CheckContext:
         """Create check context for rule execution."""
@@ -666,7 +709,7 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
                 'tags': rule.tags or [],
                 'environment': context.environment
             },
-            check_config=rule.check.config,
+            check_config=self._apply_alias_config_defaults(rule.check.type, rule.check.config),
             environment=context.environment,
             target_urls=context.target_urls,
             debug=context.debug,
@@ -698,7 +741,6 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
         return RuleResults(
             summary=summary,
             failures=[],
-            rule_results=[],
             evaluation_time=context.end_time or datetime.utcnow(),
             context_info={
                 'error': error_message,

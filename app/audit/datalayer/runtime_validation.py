@@ -49,10 +49,10 @@ class TypeValidationError(Exception):
 
 def validate_types(*, enable_return_validation: bool = True) -> Callable:
     """Decorator for runtime type validation of function parameters and return values.
-    
+
     Args:
         enable_return_validation: Whether to validate return type (default: True)
-    
+
     Usage:
         @validate_types()
         def process_snapshot(snapshot: DataLayerSnapshot, config: DLContext) -> DLResult:
@@ -63,30 +63,56 @@ def validate_types(*, enable_return_validation: bool = True) -> Callable:
         # Get type hints once at decoration time
         type_hints = get_type_hints(func)
         sig = inspect.signature(func)
-        
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Bind arguments to parameters
-            bound_args = sig.bind(*args, **kwargs)
-            bound_args.apply_defaults()
-            
-            # Validate each parameter
-            for param_name, value in bound_args.arguments.items():
-                if param_name in type_hints:
-                    expected_type = type_hints[param_name]
-                    _validate_parameter(param_name, value, expected_type)
-            
-            # Call original function
-            result = func(*args, **kwargs)
-            
-            # Validate return type if enabled and type hint exists
-            if enable_return_validation and 'return' in type_hints:
-                return_type = type_hints['return']
-                _validate_parameter('return', result, return_type)
-            
-            return result
-        
-        return wrapper
+        is_async = inspect.iscoroutinefunction(func)
+
+        if is_async:
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                # Bind arguments to parameters
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+
+                # Validate each parameter
+                for param_name, value in bound_args.arguments.items():
+                    if param_name in type_hints:
+                        expected_type = type_hints[param_name]
+                        _validate_parameter(param_name, value, expected_type)
+
+                # Call original function and await result
+                result = await func(*args, **kwargs)
+
+                # Validate return type if enabled and type hint exists
+                if enable_return_validation and 'return' in type_hints:
+                    return_type = type_hints['return']
+                    _validate_parameter('return', result, return_type)
+
+                return result
+
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                # Bind arguments to parameters
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+
+                # Validate each parameter
+                for param_name, value in bound_args.arguments.items():
+                    if param_name in type_hints:
+                        expected_type = type_hints[param_name]
+                        _validate_parameter(param_name, value, expected_type)
+
+                # Call original function
+                result = func(*args, **kwargs)
+
+                # Validate return type if enabled and type hint exists
+                if enable_return_validation and 'return' in type_hints:
+                    return_type = type_hints['return']
+                    _validate_parameter('return', result, return_type)
+
+                return result
+
+            return wrapper
     return decorator
 
 
@@ -146,10 +172,14 @@ def _validate_parameter(param_name: str, value: Any, expected_type: Any) -> None
 
 def _check_type_match(value: Any, expected_type: Any) -> bool:
     """Check if a value matches an expected type."""
+    # Handle Any type first (can't use isinstance with typing.Any)
+    if expected_type is Any:
+        return True
+
     # Handle basic types
     if isinstance(expected_type, type):
         return isinstance(value, expected_type)
-    
+
     # Handle string type annotations (for forward references)
     if isinstance(expected_type, str):
         # For now, just check against known model names
@@ -166,11 +196,7 @@ def _check_type_match(value: Any, expected_type: Any) -> bool:
         }
         if expected_type in model_mapping:
             return isinstance(value, model_mapping[expected_type])
-    
-    # Handle Any type
-    if expected_type is Any:
-        return True
-    
+
     # For other complex types, be permissive
     return True
 
@@ -247,8 +273,8 @@ def validate_datalayer_snapshot(snapshot: Any) -> DataLayerSnapshot:
     if not snapshot.page_url:
         raise ValueError("DataLayerSnapshot.page_url cannot be empty")
     
-    if snapshot.max_depth and snapshot.max_depth < 1:
-        raise ValueError("DataLayerSnapshot.max_depth must be positive")
+    if snapshot.depth_reached and snapshot.depth_reached < 1:
+        raise ValueError("DataLayerSnapshot.depth_reached must be positive")
     
     if snapshot.entries_captured < 0:
         raise ValueError("DataLayerSnapshot.entries_captured cannot be negative")

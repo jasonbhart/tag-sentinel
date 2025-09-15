@@ -147,7 +147,7 @@ class WebhookAlertDispatcher(BaseAlertDispatcher):
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
         )
     
-    def dispatch(self, context: AlertContext) -> AlertDispatchResult:
+    async def dispatch(self, context: AlertContext) -> AlertDispatchResult:
         """Dispatch alert via webhook with retry logic.
         
         Args:
@@ -167,8 +167,9 @@ class WebhookAlertDispatcher(BaseAlertDispatcher):
         # Format alert payload
         alert_payload = self.format_alert(context)
         
-        # Execute dispatch with retry logic
-        return asyncio.run(self._dispatch_with_retry(alert_payload))
+        # Execute dispatch with retry logic (now async)
+        return await self._dispatch_with_retry(alert_payload)
+    
     
     async def _dispatch_with_retry(self, alert_payload) -> AlertDispatchResult:
         """Execute webhook dispatch with exponential backoff retry."""

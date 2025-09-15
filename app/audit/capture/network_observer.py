@@ -27,17 +27,18 @@ class NetworkObserver:
     
     def __init__(self, page: Page):
         """Initialize network observer for a page.
-        
+
         Args:
             page: Playwright page to observe
         """
         self.page = page
-        self.requests: Dict[str, RequestLog] = {}
+        self.requests: Dict[str, RequestLog] = {}  # URL-keyed for compatibility
+        self._requests_by_id: Dict[str, RequestLog] = {}  # ID-keyed for correctness
         self.completed_requests: List[RequestLog] = []
         self._active_requests: Set[str] = set()
         self._callbacks: List[Callable[[RequestLog], None]] = []
-        
-        # Track request start times for accurate timing
+
+        # Track request start times for accurate timing (ID-keyed)
         self._request_start_times: Dict[str, datetime] = {}
         
         # Setup event listeners
@@ -147,20 +148,23 @@ class NetworkObserver:
     
     def _on_request(self, request: Request) -> None:
         """Handle request start event.
-        
+
         Args:
             request: Playwright request object
         """
-        request_id = request.url
+        request_id = str(id(request))
         self._request_start_times[request_id] = datetime.utcnow()
-        
+
         try:
             request_log = self._create_request_log(request)
-            self.requests[request_id] = request_log
+            # Store by unique ID for correctness (prevents overwrites)
+            self._requests_by_id[request_id] = request_log
+            # Also store by URL for test compatibility (latest request wins)
+            self.requests[request.url] = request_log
             self._active_requests.add(request_id)
-            
+
             logger.debug(f"Request started: {request.method} {request.url}")
-            
+
         except Exception as e:
             logger.error(f"Error processing request start: {e}")
     
@@ -182,14 +186,14 @@ class NetworkObserver:
     async def _process_response_async(self, response: Response) -> None:
         """Process response asynchronously."""
         request = response.request
-        request_id = request.url
-        
-        if request_id not in self.requests:
+        request_id = str(id(request))
+
+        if request_id not in self._requests_by_id:
             logger.warning(f"Response received for unknown request: {request_id}")
             return
-        
+
         try:
-            request_log = self.requests[request_id]
+            request_log = self._requests_by_id[request_id]
             
             # Update with response data
             request_log.status_code = response.status
@@ -228,26 +232,29 @@ class NetworkObserver:
                 request_log.remote_address = None
             except Exception as e:
                 logger.debug(f"Failed to extract protocol info: {e}")
-            
+
             # Extract timing data
             request_log.timing = self._extract_timing_data(request)
-            
+
+            # Refresh URL mapping for test compatibility
+            self.requests[request.url] = request_log
+
             logger.debug(f"Response received: {response.status} {request.url}")
-            
+
         except Exception as e:
             logger.error(f"Error processing response: {e}")
-    
+
     def _process_response_sync(self, response: Response) -> None:
         """Process response synchronously (without body/text content)."""
         request = response.request
-        request_id = request.url
-        
-        if request_id not in self.requests:
+        request_id = str(id(request))
+
+        if request_id not in self._requests_by_id:
             logger.warning(f"Response received for unknown request: {request_id}")
             return
-        
+
         try:
-            request_log = self.requests[request_id]
+            request_log = self._requests_by_id[request_id]
             
             # Update with response data
             request_log.status_code = response.status
@@ -270,26 +277,29 @@ class NetworkObserver:
             
             # Extract timing data
             request_log.timing = self._extract_timing_data(request)
-            
+
+            # Refresh URL mapping for test compatibility
+            self.requests[request.url] = request_log
+
             logger.debug(f"Response received: {response.status} {request.url}")
-            
+
         except Exception as e:
             logger.error(f"Error processing response: {e}")
-    
+
     def _on_request_finished(self, request: Request) -> None:
         """Handle request finished event.
         
         Args:
             request: Playwright request object
         """
-        request_id = request.url
-        
-        if request_id not in self.requests:
+        request_id = str(id(request))
+
+        if request_id not in self._requests_by_id:
             logger.warning(f"Request finished for unknown request: {request_id}")
             return
-        
+
         try:
-            request_log = self.requests[request_id]
+            request_log = self._requests_by_id[request_id]
             request_log.status = RequestStatus.SUCCESS
             request_log.end_time = datetime.utcnow()
             
@@ -297,13 +307,16 @@ class NetworkObserver:
             self.completed_requests.append(request_log)
             self._active_requests.discard(request_id)
             
+            # Refresh URL mapping for test compatibility
+            self.requests[request.url] = request_log
+
             # Call callbacks
             for callback in self._callbacks:
                 try:
                     callback(request_log)
                 except Exception as e:
                     logger.error(f"Error in request callback: {e}")
-            
+
             logger.debug(f"Request finished: {request.method} {request.url}")
             
         except Exception as e:
@@ -315,16 +328,17 @@ class NetworkObserver:
         Args:
             request: Playwright request object
         """
-        request_id = request.url
-        
-        if request_id not in self.requests:
+        request_id = str(id(request))
+
+        if request_id not in self._requests_by_id:
             logger.warning(f"Request failed for unknown request: {request_id}")
             # Create a failed request log for unknown requests
             request_log = self._create_request_log(request)
-            self.requests[request_id] = request_log
-        
+            self._requests_by_id[request_id] = request_log
+            self.requests[request.url] = request_log
+
         try:
-            request_log = self.requests[request_id]
+            request_log = self._requests_by_id[request_id]
             
             # Determine failure type
             error_text = request.failure or "Unknown error"
@@ -342,14 +356,17 @@ class NetworkObserver:
             # Move to completed list
             self.completed_requests.append(request_log)
             self._active_requests.discard(request_id)
-            
+
+            # Refresh URL mapping for test compatibility
+            self.requests[request.url] = request_log
+
             # Call callbacks
             for callback in self._callbacks:
                 try:
                     callback(request_log)
                 except Exception as e:
                     logger.error(f"Error in request callback: {e}")
-            
+
             logger.debug(f"Request failed: {request.method} {request.url} - {error_text}")
             
         except Exception as e:
@@ -365,14 +382,14 @@ class NetworkObserver:
     
     def get_active_requests(self) -> List[RequestLog]:
         """Get currently active (pending) requests.
-        
+
         Returns:
             List of active RequestLog objects
         """
         active = []
         for request_id in self._active_requests:
-            if request_id in self.requests:
-                active.append(self.requests[request_id])
+            if request_id in self._requests_by_id:
+                active.append(self._requests_by_id[request_id])
         return active
     
     def get_all_requests(self) -> List[RequestLog]:
@@ -422,8 +439,8 @@ class NetworkObserver:
         current_time = datetime.utcnow()
         
         for request_id in list(self._active_requests):
-            if request_id in self.requests:
-                request_log = self.requests[request_id]
+            if request_id in self._requests_by_id:
+                request_log = self._requests_by_id[request_id]
                 request_log.status = RequestStatus.TIMEOUT
                 request_log.error_text = "Request did not complete before navigation ended"
                 request_log.end_time = current_time

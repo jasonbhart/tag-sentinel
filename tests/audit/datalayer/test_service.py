@@ -33,7 +33,7 @@ class TestDataLayerService:
         """Test service initialization."""
         assert self.service.config == self.config
         assert self.service.snapshotter is not None
-        assert self.service.redactor is not None
+        assert self.service.redaction_manager is not None
         assert self.service.validator is not None
         assert self.service.aggregator is None  # Not initialized until needed
     
@@ -45,7 +45,7 @@ class TestDataLayerService:
         mock_page.url = "https://example.com"
         mock_page.evaluate.return_value = {"page": "home", "user_id": "123"}
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         # Mock schema for validation
         schema = {
@@ -73,7 +73,7 @@ class TestDataLayerService:
         mock_page.url = "https://example.com"
         mock_page.evaluate.return_value = {"invalid_field": "value"}
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         # Schema that requires 'page' field
         schema = {
@@ -87,7 +87,7 @@ class TestDataLayerService:
         assert not result.success  # Should fail due to validation errors
         assert result.snapshot.has_data
         assert len(result.issues) > 0
-        assert any(issue.severity == ValidationSeverity.ERROR for issue in result.issues)
+        assert any(issue.severity == ValidationSeverity.CRITICAL for issue in result.issues)
     
     @pytest.mark.asyncio
     async def test_capture_and_validate_with_redaction(self):
@@ -101,7 +101,7 @@ class TestDataLayerService:
             "phone": "555-123-4567"
         }
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         # Configure redaction
         redaction_paths = ["/user_email", "/phone"]
@@ -130,7 +130,7 @@ class TestDataLayerService:
         mock_page.url = "https://example.com"
         mock_page.evaluate.return_value = None
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         result = await self.service.capture_and_validate(mock_page, context)
         
@@ -146,7 +146,7 @@ class TestDataLayerService:
         mock_page.url = "https://example.com"
         mock_page.evaluate.side_effect = asyncio.TimeoutError("Timeout")
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         result = await self.service.capture_and_validate(mock_page, context)
         
@@ -159,9 +159,9 @@ class TestDataLayerService:
         """Test processing multiple pages."""
         # Create mock page contexts
         contexts = [
-            DLContext(url="https://example.com/page1"),
-            DLContext(url="https://example.com/page2"),
-            DLContext(url="https://example.com/page3")
+            DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/page1"}),
+            DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/page2"}),
+            DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/page3"})
         ]
         
         # Mock successful processing
@@ -298,7 +298,7 @@ class TestDataLayerService:
         disabled_service = DataLayerService(disabled_config)
         
         mock_page = AsyncMock()
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         result = await disabled_service.capture_and_validate(mock_page, context)
         
@@ -318,7 +318,7 @@ class TestDataLayerService:
         
         assert self.service.config == new_config
         assert self.service.snapshotter.config == new_config
-        assert self.service.redactor.config.enabled == new_config.redaction.enabled
+        assert self.service.redaction_manager.config.enabled == new_config.redaction.enabled
     
     @pytest.mark.asyncio
     async def test_error_handling_and_recovery(self):
@@ -328,7 +328,7 @@ class TestDataLayerService:
         mock_page.url = "https://example.com"
         mock_page.evaluate.side_effect = Exception("Unexpected error")
         
-        context = DLContext(url="https://example.com")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         # Should handle error gracefully
         result = await self.service.capture_and_validate(mock_page, context)
@@ -397,7 +397,7 @@ class TestDataLayerService:
     async def test_service_shutdown_cleanup(self):
         """Test service cleanup on shutdown."""
         # Create service with some state
-        contexts = [DLContext(url="https://example.com/test")]
+        contexts = [DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/test"})]
         
         with patch.object(self.service, 'process_multiple_pages') as mock_process:
             mock_process.return_value = []

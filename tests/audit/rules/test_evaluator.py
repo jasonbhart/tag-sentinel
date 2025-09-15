@@ -54,7 +54,7 @@ def sample_rule():
         description="A rule for testing",
         severity=Severity.WARNING,
         check=CheckConfig(
-            type=CheckType.PRESENCE,
+            type=CheckType.REQUEST_PRESENT,
             parameters={"url_pattern": "test.js"}
         )
     )
@@ -139,7 +139,7 @@ class TestRuleEvaluationEngine:
             name="All Environments",
             description="Applies to all environments",
             severity=Severity.INFO,
-            check=CheckConfig(type=CheckType.PRESENCE, parameters={})
+            check=CheckConfig(type=CheckType.REQUEST_PRESENT, parameters={})
         )
         
         rule_prod_only = Rule(
@@ -147,7 +147,7 @@ class TestRuleEvaluationEngine:
             name="Production Only", 
             description="Applies only to production",
             severity=Severity.CRITICAL,
-            check=CheckConfig(type=CheckType.PRESENCE, parameters={})
+            check=CheckConfig(type=CheckType.REQUEST_PRESENT, parameters={})
         )
         # Set environment constraint
         rule_prod_only.applies_to.environments = ["production"]
@@ -439,7 +439,7 @@ class TestParallelEvaluation:
         rules = [
             Rule(id=f"rule_{i}", name=f"Rule {i}", description="Test", 
                  severity=Severity.CRITICAL, 
-                 check=CheckConfig(type=CheckType.PRESENCE, parameters={}))
+                 check=CheckConfig(type=CheckType.REQUEST_PRESENT, parameters={}))
             for i in range(5)
         ]
         

@@ -113,7 +113,7 @@ class TestConfigValidation:
                     "description": "A test rule",
                     "severity": "warning",
                     "check": {
-                        "type": "presence",
+                        "type": "request_present",
                         "parameters": {
                             "url_pattern": "analytics.js"
                         }
@@ -159,7 +159,7 @@ class TestConfigValidation:
                     "description": "Rule with invalid severity",
                     "severity": "invalid_severity",
                     "check": {
-                        "type": "presence",
+                        "type": "request_present",
                         "parameters": {}
                     }
                 }
@@ -204,7 +204,7 @@ class TestConfigValidation:
                     "description": "Test",
                     "severity": "info",
                     "check": {
-                        "type": "presence",
+                        "type": "request_present",
                         "parameters": {}
                     }
                 }
@@ -241,7 +241,7 @@ class TestConfigValidation:
                     "severity": "critical",
                     "enabled": True,
                     "check": {
-                        "type": "presence",
+                        "type": "request_present",
                         "parameters": {
                             "url_pattern": "https://.*\\.googletagmanager\\.com/gtm\\.js\\?id=GTM-.*",
                             "method": "GET",
@@ -289,7 +289,7 @@ rules:
     description: Testing YAML validation
     severity: info
     check:
-      type: presence
+      type: request_present
       parameters:
         url_pattern: "test.js"
 """
@@ -367,7 +367,7 @@ class TestFileValidation:
                     "description": "Temporary test rule",
                     "severity": "warning",
                     "check": {
-                        "type": "presence",
+                        "type": "request_present",
                         "parameters": {
                             "url_pattern": "temp.js"
                         }
@@ -510,8 +510,10 @@ class TestSchemaEdgeCases:
                     "description": "Test",
                     "severity": "info",
                     "check": {
-                        "type": "presence",
-                        "parameters": {}
+                        "type": "request_present",
+                        "parameters": {
+                            "url_pattern": "test.js"
+                        }
                     },
                     "custom_field": "extra_data"
                 }

@@ -22,17 +22,28 @@ logger = logging.getLogger(__name__)
 
 try:
     import jsonschema
-    from jsonschema import Draft202012Validator, RefResolver, ValidationError as JSValidationError
+    from jsonschema import Draft202012Validator, ValidationError as JSValidationError
     from jsonschema.exceptions import SchemaError
+    # Try to import new referencing approach, fallback to deprecated RefResolver
+    try:
+        from referencing import Registry
+        HAS_REFERENCING = True
+        RefResolver = None  # Use new approach
+    except ImportError:
+        from jsonschema import RefResolver
+        Registry = None
+        HAS_REFERENCING = False
     HAS_JSONSCHEMA = True
 except ImportError:
     logger.warning("jsonschema library not available - validation will be disabled")
     jsonschema = None
     Draft202012Validator = None
     RefResolver = None
+    Registry = None
     JSValidationError = None
     SchemaError = None
     HAS_JSONSCHEMA = False
+    HAS_REFERENCING = False
 
 
 class ValidationError(Exception):
@@ -56,7 +67,11 @@ class SchemaLoader:
         """
         self.config = config or SchemaConfig()
         self._schema_cache: Dict[str, Dict[str, Any]] = {}
-        self._resolver_cache: Dict[str, RefResolver] = {}
+        # Use modern registry or fallback to deprecated resolver
+        if HAS_REFERENCING:
+            self._registry_cache: Dict[str, Registry] = {}
+        else:
+            self._resolver_cache: Dict[str, RefResolver] = {}
     
     def load_schema(self, schema_path: str | Path) -> Dict[str, Any]:
         """Load schema from file with caching.
@@ -116,36 +131,52 @@ class SchemaLoader:
     
     def create_resolver(self, schema: Dict[str, Any], schema_path: Path | None = None):
         """Create JSON Schema reference resolver.
-        
+
         Args:
             schema: Root schema
             schema_path: Path to schema file for resolving relative references
-            
+
         Returns:
-            Configured RefResolver
+            Configured resolver (Registry for modern, RefResolver for legacy)
         """
         if not self.config.resolve_references or not HAS_JSONSCHEMA:
             return None
-        
+
         # Create base URI for reference resolution
         if schema_path:
             base_uri = schema_path.as_uri()
         else:
             base_uri = ""
-        
+
         # Check cache
         cache_key = f"{base_uri}:{id(schema)}"
-        if cache_key in self._resolver_cache:
-            return self._resolver_cache[cache_key]
+
+        if HAS_REFERENCING:
+            # Use modern referencing approach
+            if cache_key in self._registry_cache:
+                return self._registry_cache[cache_key]
+        else:
+            # Fall back to deprecated RefResolver
+            if cache_key in self._resolver_cache:
+                return self._resolver_cache[cache_key]
         
         try:
-            resolver = RefResolver(base_uri=base_uri, referrer=schema)
-            
-            # Cache resolver
-            self._resolver_cache[cache_key] = resolver
-            
-            return resolver
-            
+            if HAS_REFERENCING:
+                # Use modern Registry approach
+                registry = Registry().with_resource(base_uri, schema)
+                self._registry_cache[cache_key] = registry
+                return registry
+            else:
+                # Use deprecated RefResolver (with suppressed warning)
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    resolver = RefResolver(base_uri=base_uri, referrer=schema)
+
+                # Cache resolver
+                self._resolver_cache[cache_key] = resolver
+                return resolver
+
         except Exception as e:
             logger.warning(f"Failed to create resolver: {e}")
             return None

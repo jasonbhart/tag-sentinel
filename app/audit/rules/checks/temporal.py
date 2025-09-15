@@ -108,7 +108,7 @@ class LoadTimingCheck(BaseCheck):
     
     def _check_page_timing(
         self,
-        page: PageIndex,
+        page: PageResult,  # PageIndex → PageResult
         max_load_time: int,
         min_load_time: int,
         resource_thresholds: Dict[str, int],
@@ -138,7 +138,7 @@ class LoadTimingCheck(BaseCheck):
                 })
         
         # Check individual request timing
-        for req in page.request_timeline:
+        for req in page.network_requests:
             duration = req.duration_ms
             if duration is None:
                 continue
@@ -288,7 +288,7 @@ class SequenceOrderCheck(BaseCheck):
     
     def _build_sequence_from_timeline(
         self,
-        page: PageIndex,
+        page: PageResult,  # PageIndex → PageResult
         sequence_items: List[Dict[str, Any]],
         context: CheckContext
     ) -> List[SequenceItem]:
@@ -304,7 +304,9 @@ class SequenceOrderCheck(BaseCheck):
                 url_pattern = seq_config.get('url_pattern')
                 method = seq_config.get('method')
                 
-                for req in page.request_timeline:
+                # Get requests from PageResult.network_requests
+                network_requests = context.page_result.network_requests if context.page_result else []
+                for req in network_requests:
                     if url_pattern:
                         import re
                         if not re.search(url_pattern, req.url):
@@ -321,22 +323,24 @@ class SequenceOrderCheck(BaseCheck):
             elif item_type == 'event':
                 # Find matching events
                 vendor = seq_config.get('vendor')
-                event_type = seq_config.get('event_type')
+                name = seq_config.get('name')
                 event_name = seq_config.get('event_name')
                 
-                for entry in page.timeline:
+                # Get timeline from indexes instead of page.timeline 
+                timeline = context.indexes.pages.timelines.get(page.url, [])
+                for entry in timeline:
                     if entry.event_type == 'tag_event' and 'tag_event' in entry.metadata:
                         event = entry.metadata['tag_event']
                         
                         if vendor and event.vendor != vendor:
                             continue
-                        if event_type and event.event_type != event_type:
+                        if name and event.name != name:
                             continue
                         if event_name and event.event_name != event_name:
                             continue
                         
                         sequence.append(SequenceItem(
-                            identifier=identifier or f"event_{event.vendor}_{event.event_type}",
+                            identifier=identifier or f"event_{event.vendor}_{event.name}",
                             timestamp=entry.timestamp,
                             item_data=event
                         ))
@@ -528,7 +532,9 @@ class RelativeTimingCheck(BaseCheck):
             url_pattern = item_config.get('url_pattern')
             method = item_config.get('method')
             
-            for req in page.request_timeline:
+            # Get requests from PageResult.network_requests
+            network_requests = context.page_result.network_requests if context.page_result else []
+            for req in network_requests:
                 if url_pattern:
                     import re
                     if not re.search(url_pattern, req.url):
@@ -544,19 +550,21 @@ class RelativeTimingCheck(BaseCheck):
         
         elif item_type == 'event':
             vendor = item_config.get('vendor')
-            event_type = item_config.get('event_type')
+            name = item_config.get('name')
             
-            for entry in page.timeline:
+            # Get timeline from indexes instead of page.timeline
+            timeline = context.indexes.pages.timelines.get(page.url, [])
+            for entry in timeline:
                 if entry.event_type == 'tag_event' and 'tag_event' in entry.metadata:
                     event = entry.metadata['tag_event']
                     
                     if vendor and event.vendor != vendor:
                         continue
-                    if event_type and event.event_type != event_type:
+                    if name and event.name != name:
                         continue
                     
                     items.append(SequenceItem(
-                        identifier=f"event_{event.vendor}_{event.event_type}",
+                        identifier=f"event_{event.vendor}_{event.name}",
                         timestamp=entry.timestamp,
                         item_data=event
                     ))

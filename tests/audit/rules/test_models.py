@@ -168,11 +168,11 @@ class TestCheckConfig:
     def test_check_config_basic(self):
         """Test basic CheckConfig creation."""
         config = CheckConfig(
-            type=CheckType.PRESENCE,
+            type=CheckType.REQUEST_PRESENT,
             parameters={"url_pattern": "analytics.js"}
         )
-        
-        assert config.type == CheckType.PRESENCE
+
+        assert config.type == CheckType.REQUEST_PRESENT
         assert config.parameters == {"url_pattern": "analytics.js"}
         assert config.timeout_seconds == 30
         assert config.retry_count == 0
@@ -180,14 +180,14 @@ class TestCheckConfig:
     def test_check_config_with_all_options(self):
         """Test CheckConfig with all options."""
         config = CheckConfig(
-            type=CheckType.DUPLICATE,
+            type=CheckType.DUPLICATE_REQUESTS,
             parameters={"window_seconds": 60},
             timeout_seconds=45,
             retry_count=2,
             enabled=False
         )
-        
-        assert config.type == CheckType.DUPLICATE
+
+        assert config.type == CheckType.DUPLICATE_REQUESTS
         assert config.parameters == {"window_seconds": 60}
         assert config.timeout_seconds == 45
         assert config.retry_count == 2
@@ -200,7 +200,7 @@ class TestRule:
     def test_rule_creation(self):
         """Test basic rule creation."""
         check_config = CheckConfig(
-            type=CheckType.PRESENCE,
+            type=CheckType.REQUEST_PRESENT,
             parameters={"url_pattern": "gtm.js"}
         )
         
@@ -228,7 +228,7 @@ class TestRule:
         )
         
         check_config = CheckConfig(
-            type=CheckType.ABSENCE,
+            type=CheckType.REQUEST_ABSENT,
             parameters={"url_pattern": "test-analytics.js"}
         )
         
@@ -378,7 +378,7 @@ class TestModelValidation:
             name="Rule 1",
             description="First rule",
             severity=Severity.INFO,
-            check=CheckConfig(type=CheckType.PRESENCE, parameters={})
+            check=CheckConfig(type=CheckType.REQUEST_PRESENT, parameters={})
         )
         
         rule2 = Rule(
@@ -386,7 +386,7 @@ class TestModelValidation:
             name="Rule 2",
             description="Second rule",
             severity=Severity.WARNING,
-            check=CheckConfig(type=CheckType.ABSENCE, parameters={})
+            check=CheckConfig(type=CheckType.REQUEST_ABSENT, parameters={})
         )
         
         # Should not raise error - uniqueness is enforced at higher level
@@ -400,7 +400,7 @@ class TestModelValidation:
             description="Testing serialization roundtrip",
             severity=Severity.WARNING,
             check=CheckConfig(
-                type=CheckType.PRESENCE,
+                type=CheckType.REQUEST_PRESENT,
                 parameters={"url_pattern": "test.js", "timeout": 5000}
             ),
             applies_to=AppliesTo(

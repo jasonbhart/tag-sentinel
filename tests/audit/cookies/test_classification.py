@@ -275,18 +275,20 @@ class TestCookieClassifier:
     
     def test_classification_with_custom_rules(self):
         """Test classification with custom configuration rules."""
-        # Create config with custom rules
+        # Create config with custom rules using ClassificationConfig
+        from app.audit.cookies.config import ClassificationConfig
+        
         config = PrivacyConfiguration()
-        config.classification_rules = {
-            "essential_patterns": [
+        config.classification = ClassificationConfig(
+            essential_patterns=[
                 r"^custom_session_",
                 r"_auth$"
             ],
-            "non_essential_patterns": [
+            non_essential_patterns=[
                 r"^analytics_",
                 r"^marketing_"
             ]
-        }
+        )
         
         classifier = CookieClassifier(config)
         page_url = "https://example.com"

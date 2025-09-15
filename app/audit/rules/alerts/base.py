@@ -345,7 +345,7 @@ class BaseAlertDispatcher(ABC):
         self.rate_limit_window_seconds = config.get('rate_limit_window_seconds', 60)
     
     @abstractmethod
-    def dispatch(self, context: AlertContext) -> AlertDispatchResult:
+    async def dispatch(self, context: AlertContext) -> AlertDispatchResult:
         """Dispatch alert using specific implementation.
         
         Args:

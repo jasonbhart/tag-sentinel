@@ -107,7 +107,7 @@ class TestRealWorldValidationScenarios:
             mock_page.url = "https://example.com/ga4-test"
             mock_page.evaluate.return_value = scenario["data"]
             
-            context = DLContext(url="https://example.com/ga4-test")
+            context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/ga4-test"})
             result = await integration_service.capture_and_validate(mock_page, context, ga4_schema)
             
             # Should pass validation
@@ -152,7 +152,7 @@ class TestRealWorldValidationScenarios:
             mock_page.url = "https://example.com/ga4-invalid"
             mock_page.evaluate.return_value = scenario["data"]
             
-            context = DLContext(url="https://example.com/ga4-invalid")
+            context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/ga4-invalid"})
             result = await integration_service.capture_and_validate(mock_page, context, ga4_schema)
             
             # Should have validation errors
@@ -160,7 +160,7 @@ class TestRealWorldValidationScenarios:
             assert len(result.issues) > 0, f"Expected validation errors for {scenario['name']}"
             
             # Should have error severity issues
-            error_issues = [issue for issue in result.issues if issue.severity == ValidationSeverity.ERROR]
+            error_issues = [issue for issue in result.issues if issue.severity == ValidationSeverity.CRITICAL]
             assert len(error_issues) > 0
     
     @pytest.mark.asyncio
@@ -299,7 +299,7 @@ class TestRealWorldValidationScenarios:
         mock_page.url = "https://example.com/adobe-test"
         mock_page.evaluate.return_value = valid_adobe_data
         
-        context = DLContext(url="https://example.com/adobe-test")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/adobe-test"})
         result = await integration_service.capture_and_validate(mock_page, context, adobe_schema)
         
         # Should pass validation
@@ -392,7 +392,7 @@ class TestRealWorldValidationScenarios:
         mock_page.url = "https://retailcorp.com/products/widget"
         mock_page.evaluate.return_value = valid_business_data
         
-        context = DLContext(url="https://retailcorp.com/products/widget")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://retailcorp.com/products/widget"})
         result = await integration_service.capture_and_validate(mock_page, context, retail_schema)
         
         # Should pass validation
@@ -561,7 +561,7 @@ class TestRealWorldValidationScenarios:
         mock_page.url = "https://example.com/v2-enhanced"
         mock_page.evaluate.return_value = v2_enhanced_data
         
-        context = DLContext(url="https://example.com/v2-enhanced")
+        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/v2-enhanced"})
         result = await integration_service.capture_and_validate(mock_page, context, schema_v2)
         
         # v2 enhanced data should pass v2 schema validation

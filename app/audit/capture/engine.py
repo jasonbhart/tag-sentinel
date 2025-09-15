@@ -7,11 +7,20 @@ web pages with comprehensive analytics tracking data.
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncGenerator, Callable
 from urllib.parse import urlparse
+
+# Optional memory monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    PSUTIL_AVAILABLE = False
 
 from .browser_factory import BrowserFactory, BrowserConfig, create_default_factory
 from .page_session import PageSession, PageSessionConfig, WaitStrategy
@@ -56,7 +65,8 @@ class CaptureEngineConfig:
         # Performance
         memory_limit_mb: Optional[int] = None,
         cleanup_interval_pages: int = 50,
-        
+        enable_context_reuse: bool = False,
+
         **kwargs
     ):
         """Initialize capture engine configuration.
@@ -83,6 +93,7 @@ class CaptureEngineConfig:
             continue_on_error: Continue processing after errors
             memory_limit_mb: Memory usage limit in MB
             cleanup_interval_pages: Pages processed between cleanups
+            enable_context_reuse: Enable browser context reuse pooling
         """
         self.browser_config = browser_config or BrowserConfig()
         self.max_concurrent_pages = max_concurrent_pages
@@ -109,6 +120,7 @@ class CaptureEngineConfig:
         
         self.memory_limit_mb = memory_limit_mb
         self.cleanup_interval_pages = cleanup_interval_pages
+        self.enable_context_reuse = enable_context_reuse
         
         # Store extra config
         self.extra_config = kwargs
@@ -158,7 +170,11 @@ class CaptureEngine:
         self._pages_processed = 0
         self._semaphore: Optional[asyncio.Semaphore] = None
         self._callbacks: List[Callable[[PageResult], None]] = []
-        
+
+        # Memory monitoring
+        self._memory_monitor_task: Optional[asyncio.Task] = None
+        self._last_memory_check = 0.0
+
         # Statistics
         self.stats = {
             'pages_attempted': 0,
@@ -168,6 +184,11 @@ class CaptureEngine:
             'total_duration_ms': 0,
             'start_time': None,
             'errors': [],
+            # Memory metrics
+            'peak_memory_mb': 0,
+            'current_memory_mb': 0,
+            'memory_warnings': 0,
+            'memory_restarts': 0,
         }
     
     async def start(self) -> None:
@@ -180,7 +201,10 @@ class CaptureEngine:
         
         try:
             # Create browser factory
-            self.browser_factory = BrowserFactory(self.config.browser_config)
+            self.browser_factory = BrowserFactory(
+                self.config.browser_config,
+                enable_context_reuse=self.config.enable_context_reuse
+            )
             await self.browser_factory.start()
             
             # Initialize concurrency control
@@ -189,7 +213,12 @@ class CaptureEngine:
             # Reset statistics
             self.stats['start_time'] = datetime.utcnow()
             self._is_running = True
-            
+
+            # Start memory monitoring task if configured
+            if self.config.memory_limit_mb and PSUTIL_AVAILABLE:
+                self._memory_monitor_task = asyncio.create_task(self._memory_monitor_loop())
+                logger.info(f"Memory monitoring enabled (limit: {self.config.memory_limit_mb}MB)")
+
             logger.info("Capture engine started successfully")
             
         except Exception as e:
@@ -202,10 +231,19 @@ class CaptureEngine:
         logger.info("Stopping capture engine")
         
         try:
+            # Cancel memory monitoring task
+            if self._memory_monitor_task and not self._memory_monitor_task.done():
+                self._memory_monitor_task.cancel()
+                try:
+                    await self._memory_monitor_task
+                except asyncio.CancelledError:
+                    pass
+                self._memory_monitor_task = None
+
             if self.browser_factory:
                 await self.browser_factory.stop()
                 self.browser_factory = None
-            
+
             self._is_running = False
             self._semaphore = None
             
@@ -213,7 +251,86 @@ class CaptureEngine:
             
         except Exception as e:
             logger.error(f"Error stopping capture engine: {e}")
-    
+
+    def _get_memory_usage_mb(self) -> float:
+        """Get current memory usage in MB.
+
+        Returns:
+            Current memory usage in MB, or 0 if monitoring unavailable
+        """
+        if not PSUTIL_AVAILABLE:
+            return 0.0
+
+        try:
+            process = psutil.Process()
+            return process.memory_info().rss / 1024 / 1024
+        except Exception:
+            return 0.0
+
+    async def _memory_monitor_loop(self) -> None:
+        """Background task to monitor memory usage."""
+        if not self.config.memory_limit_mb or not PSUTIL_AVAILABLE:
+            return
+
+        logger.info(f"Starting memory monitor with limit: {self.config.memory_limit_mb}MB")
+
+        while self._is_running:
+            try:
+                current_memory = self._get_memory_usage_mb()
+                self.stats['current_memory_mb'] = current_memory
+
+                if current_memory > self.stats['peak_memory_mb']:
+                    self.stats['peak_memory_mb'] = current_memory
+
+                # Check memory limit
+                if current_memory > self.config.memory_limit_mb:
+                    self.stats['memory_warnings'] += 1
+                    logger.warning(
+                        f"Memory usage ({current_memory:.1f}MB) exceeds limit "
+                        f"({self.config.memory_limit_mb}MB)"
+                    )
+
+                    # Restart browser if memory usage is critical (25% over limit)
+                    if current_memory > self.config.memory_limit_mb * 1.25:
+                        logger.error(
+                            f"Critical memory usage ({current_memory:.1f}MB), "
+                            "restarting browser"
+                        )
+                        await self._restart_browser()
+                        self.stats['memory_restarts'] += 1
+
+                # Update memory stats every 30 seconds
+                await asyncio.sleep(30)
+
+            except Exception as e:
+                logger.error(f"Memory monitoring error: {e}")
+                await asyncio.sleep(60)  # Wait longer if error occurred
+
+    async def _restart_browser(self) -> None:
+        """Restart browser to free memory."""
+        try:
+            if self.browser_factory and self.browser_factory.is_running:
+                logger.info("Restarting browser due to memory pressure")
+                await self.browser_factory.restart_browser()
+                logger.info("Browser restart completed")
+        except Exception as e:
+            logger.error(f"Browser restart failed: {e}")
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Get current memory statistics.
+
+        Returns:
+            Dictionary with memory usage statistics
+        """
+        return {
+            'current_memory_mb': self.stats['current_memory_mb'],
+            'peak_memory_mb': self.stats['peak_memory_mb'],
+            'memory_limit_mb': self.config.memory_limit_mb,
+            'memory_warnings': self.stats['memory_warnings'],
+            'memory_restarts': self.stats['memory_restarts'],
+            'monitoring_available': PSUTIL_AVAILABLE,
+        }
+
     def add_callback(self, callback: Callable[[PageResult], None]) -> None:
         """Add callback to be called for each completed page capture.
         
@@ -288,19 +405,42 @@ class CaptureEngine:
     
     async def _capture_page_single_attempt(self, url: str, config: PageSessionConfig) -> PageResult:
         """Perform single page capture attempt.
-        
+
         Args:
             url: URL to capture
             config: Page session configuration
-            
+
         Returns:
             PageResult with captured data
         """
         start_time = datetime.utcnow()
-        
+        start_memory = self._get_memory_usage_mb()
+
         try:
-            # Create new page context
-            async with self.browser_factory.page() as page:
+            # Prepare context overrides for HAR/trace recording
+            context_overrides = {}
+
+            if config.artifacts_dir and (config.enable_har or config.enable_trace):
+                from urllib.parse import urlparse
+                from pathlib import Path
+
+                artifacts_dir = Path(config.artifacts_dir)
+                artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+                url_safe = urlparse(url).netloc.replace(':', '_')
+                timestamp = start_time.strftime('%Y%m%d_%H%M%S')
+                base_filename = f"{url_safe}_{timestamp}"
+
+                if config.enable_har:
+                    har_path = artifacts_dir / f"{base_filename}.har"
+                    context_overrides['record_har_path'] = str(har_path)
+
+                if config.enable_trace:
+                    trace_path = artifacts_dir / f"{base_filename}.zip"
+                    context_overrides['record_trace_path'] = str(trace_path)
+
+            # Create new page context with recording options
+            async with self.browser_factory.page(**context_overrides) as page:
                 # Create and execute page session
                 session = PageSession(page, config)
                 result = await session.capture_page(url)
@@ -311,9 +451,19 @@ class CaptureEngine:
                 if self._pages_processed % self.config.cleanup_interval_pages == 0:
                     await self._perform_cleanup()
                 
+                # Add memory metrics to result
+                end_memory = self._get_memory_usage_mb()
+                if not hasattr(result, 'metrics') or result.metrics is None:
+                    result.metrics = {}
+                result.metrics.update({
+                    'memory_start_mb': start_memory,
+                    'memory_end_mb': end_memory,
+                    'memory_delta_mb': end_memory - start_memory,
+                })
+
                 self._update_stats(result)
                 self._call_callbacks(result)
-                
+
                 return result
                 
         except Exception as e:

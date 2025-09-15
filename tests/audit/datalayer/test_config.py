@@ -126,10 +126,10 @@ class TestRedactionConfig:
         assert len(config.patterns) == 2
         assert "email" in config.patterns
     
-    def test_invalid_redaction_action(self):
-        """Test invalid redaction action."""
+    def test_invalid_redaction_method(self):
+        """Test invalid redaction method."""
         with pytest.raises(ValueError):
-            RedactionConfig(default_action="INVALID_ACTION")
+            RedactionConfig(default_method="INVALID_METHOD")
 
 
 class TestValidationConfig:

@@ -1,0 +1,60 @@
+# Tag Sentinel Crawl Configuration
+# This file configures crawling behavior and limits
+
+# Discovery mode - how to find URLs to crawl
+discovery_mode: "seeds"  # seeds, sitemap, dom, hybrid
+
+# Initial seed URLs (required for seeds/dom/hybrid modes)
+seeds:
+  - "https://example.com"
+
+# Sitemap URL for discovery (required for sitemap/hybrid modes)
+sitemap_url: null
+
+# URL filtering patterns (regex)
+include_patterns: []
+exclude_patterns:
+  - ".*\\.(pdf|zip|exe|dmg)$"  # Skip binary files
+  - ".*/admin/.*"              # Skip admin sections
+
+# Scope limiting
+same_site_only: true
+
+# Crawl limits and performance
+max_pages: 500
+max_depth: null  # Unlimited depth
+max_concurrency: 5
+requests_per_second: 2.0
+max_concurrent_per_host: 2
+
+# Timeouts and retries
+page_timeout: 30          # seconds
+navigation_timeout: 30    # seconds
+max_retries: 3
+retry_delay: 1.0          # seconds
+
+# Load wait configuration
+load_wait_strategy: "networkidle"  # networkidle, selector, timeout, custom
+load_wait_timeout: 5      # seconds
+load_wait_selector: null  # CSS selector (for selector strategy)
+load_wait_js: null        # JS condition (for custom strategy)
+
+# Browser settings
+user_agent: null          # Use default if null
+extra_headers: {}
+
+# Environment-specific overrides
+environments:
+  development:
+    max_concurrency: 2
+    requests_per_second: 1.0
+    max_pages: 50
+
+  staging:
+    max_pages: 1000
+    requests_per_second: 3.0
+
+  test:
+    max_concurrency: 1
+    max_pages: 10
+    requests_per_second: 5.0
