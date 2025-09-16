@@ -44,6 +44,7 @@ from .snapshot import Snapshotter, BatchSnapshotter
 from .redaction import Redactor, RedactionManager
 from .validation import Validator, SchemaManager
 from .service import DataLayerService, capture_page_datalayer, create_dataLayer_service
+from .metrics import DataLayerMetrics
 
 __version__ = "1.0.0"
 
@@ -56,10 +57,11 @@ __all__ = [
     # Core components
     "Snapshotter",
     "BatchSnapshotter",
-    "Redactor", 
+    "Redactor",
     "RedactionManager",
     "Validator",
     "SchemaManager",
+    "DataLayerMetrics",
     
     # Data models
     "DataLayerSnapshot",

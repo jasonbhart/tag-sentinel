@@ -6,7 +6,6 @@ executor) to perform complete page capture with configurable wait strategies
 and error recovery.
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Callable
@@ -344,7 +343,9 @@ class PageSession:
         
         # Collect cookies
         if self.cookie_collector:
-            cookies = await self.cookie_collector.collect_cookies(self.page_result.url)
+            # Use final URL for proper first-party classification after redirects
+            url_for_classification = self.page_result.final_url or self.page_result.url
+            cookies = await self.cookie_collector.collect_cookies(url_for_classification)
             self.page_result.cookies = cookies
         
         # Add performance metrics
@@ -403,21 +404,8 @@ class PageSession:
             except Exception as e:
                 logger.debug(f"Failed to save page source: {e}")
             
-            # Generate HAR if configured
-            if self.config.enable_har:
-                # HAR generation would be handled by browser context configuration
-                har_path = artifacts_dir / f"{base_filename}.har"
-                if har_path.exists():
-                    artifacts.har_file = har_path
-                    logger.debug(f"HAR file found: {har_path}")
-            
-            # Trace file if configured
-            if self.config.enable_trace:
-                # Trace would be handled by browser context configuration  
-                trace_path = artifacts_dir / f"{base_filename}.zip"
-                if trace_path.exists():
-                    artifacts.trace_file = trace_path
-                    logger.debug(f"Trace file found: {trace_path}")
+            # HAR and trace files are handled by the engine post-context
+            # to ensure they're available after the browser context closes
         
         except Exception as e:
             logger.error(f"Error generating artifacts: {e}")

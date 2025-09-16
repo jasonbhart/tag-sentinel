@@ -7,7 +7,6 @@ web pages with comprehensive analytics tracking data.
 
 import asyncio
 import logging
-import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -379,26 +378,30 @@ class CaptureEngine:
         for attempt in range(self.config.retry_attempts + 1):
             try:
                 async with self._semaphore:
-                    return await self._capture_page_single_attempt(url, config)
-                    
+                    result = await self._capture_page_single_attempt(url, config)
+                    # Success - update stats and call callbacks once
+                    self._update_stats(result)
+                    self._call_callbacks(result)
+                    return result
+
             except Exception as e:
                 last_error = e
                 logger.warning(f"Capture attempt {attempt + 1} failed for {url}: {e}")
-                
+
                 if attempt < self.config.retry_attempts:
                     delay = self.config.retry_delay_ms / 1000.0 * (2 ** attempt)  # Exponential backoff
                     await asyncio.sleep(delay)
                 else:
                     logger.error(f"All capture attempts failed for {url}: {e}")
-        
-        # Create failed result
+
+        # All retries exhausted - create failed result
         result = PageResult(
             url=url,
             capture_status=CaptureStatus.FAILED,
             capture_error=str(last_error),
             capture_time=datetime.utcnow()
         )
-        
+
         self._update_stats(result)
         self._call_callbacks(result)
         return result
@@ -421,8 +424,6 @@ class CaptureEngine:
             context_overrides = {}
 
             if config.artifacts_dir and (config.enable_har or config.enable_trace):
-                from urllib.parse import urlparse
-                from pathlib import Path
 
                 artifacts_dir = Path(config.artifacts_dir)
                 artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -444,13 +445,13 @@ class CaptureEngine:
                 # Create and execute page session
                 session = PageSession(page, config)
                 result = await session.capture_page(url)
-                
+
                 self._pages_processed += 1
-                
+
                 # Periodic cleanup
                 if self._pages_processed % self.config.cleanup_interval_pages == 0:
                     await self._perform_cleanup()
-                
+
                 # Add memory metrics to result
                 end_memory = self._get_memory_usage_mb()
                 if not hasattr(result, 'metrics') or result.metrics is None:
@@ -461,24 +462,39 @@ class CaptureEngine:
                     'memory_delta_mb': end_memory - start_memory,
                 })
 
-                self._update_stats(result)
-                self._call_callbacks(result)
+            # After context closes, check for HAR/trace files and update artifacts
+            if config.artifacts_dir and (config.enable_har or config.enable_trace):
+                self._update_post_context_artifacts(result, context_overrides)
 
-                return result
-                
+            return result
+
         except Exception as e:
-            # Create error result
-            result = PageResult(
-                url=url,
-                capture_status=CaptureStatus.FAILED,
-                capture_error=str(e),
-                capture_time=start_time,
-                load_time_ms=(datetime.utcnow() - start_time).total_seconds() * 1000
-            )
-            
-            self._update_stats(result)
-            self._call_callbacks(result)
+            # Let retry wrapper handle stats and callbacks
             raise e
+
+    def _update_post_context_artifacts(self, result, context_overrides: Dict[str, str]) -> None:
+        """Update artifacts paths after context has closed and files are available."""
+        try:
+            from ..models.capture import ArtifactPaths
+
+            # Initialize artifacts if not already present
+            if not hasattr(result, 'artifacts') or result.artifacts is None:
+                result.artifacts = ArtifactPaths()
+
+            # Check for HAR file
+            if 'record_har_path' in context_overrides:
+                har_path = Path(context_overrides['record_har_path'])
+                if har_path.exists():
+                    result.artifacts.har_file = har_path
+
+            # Check for trace file
+            if 'record_trace_path' in context_overrides:
+                trace_path = Path(context_overrides['record_trace_path'])
+                if trace_path.exists():
+                    result.artifacts.trace_file = trace_path
+
+        except Exception as e:
+            logger.debug(f"Failed to update post-context artifacts: {e}")
     
     async def capture_pages(
         self, 
@@ -550,8 +566,14 @@ class CaptureEngine:
             if plan.load_wait_timeout:
                 overrides['wait_timeout_ms'] = plan.load_wait_timeout * 1000
             
-            # Add plan metadata to overrides
-            overrides['pre_steps'] = []  # Could be populated from plan.metadata
+            # Add plan-specific configuration to overrides
+            overrides['pre_steps'] = plan.pre_steps
+
+            # Merge scenario headers with default headers
+            if plan.scenario_headers:
+                if 'extra_headers' not in overrides:
+                    overrides['extra_headers'] = {}
+                overrides['extra_headers'].update(plan.scenario_headers)
             
             try:
                 result = await self.capture_page(str(plan.url), overrides)

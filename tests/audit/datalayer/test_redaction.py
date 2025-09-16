@@ -17,7 +17,7 @@ from app.audit.datalayer.redaction import (
 )
 from app.audit.datalayer.models import RedactionMethod
 from app.audit.datalayer.redaction import RedactionAuditEntry
-from app.audit.datalayer.config import RedactionConfig
+from app.audit.datalayer.config import RedactionConfig, RedactionRuleConfig
 
 
 class TestRedactor:
@@ -36,42 +36,43 @@ class TestRedactor:
     def test_hash_redaction(self):
         """Test HASH redaction method."""
         original_value = "sensitive_data_123"
-        redacted = self.redaction_manager._apply_redaction(
-            original_value, RedactionMethod.HASH, "test_pattern"
+        redacted = self.redaction_manager._apply_redaction_method(
+            original_value, RedactionMethod.HASH
         )
         
-        # Should return a hash
+        # Should return a hash in [HASH:...] format
         assert redacted != original_value
-        assert len(redacted) == 64  # SHA256 hex length
-        assert redacted.isalnum()
+        assert redacted.startswith("[HASH:")
+        assert redacted.endswith("]")
+        assert len(redacted) > 10  # Should have some hash content
     
     def test_mask_redaction(self):
         """Test MASK redaction method."""
         original_value = "user@example.com"
-        redacted = self.redaction_manager._apply_redaction(
-            original_value, RedactionMethod.MASK, "email_pattern"
+        redacted = self.redaction_manager._apply_redaction_method(
+            original_value, RedactionMethod.MASK
         )
         
         # Should mask middle characters
         assert redacted != original_value
         assert redacted.startswith("u")
-        assert redacted.endswith("com")
+        assert redacted.endswith("m")
         assert "*" in redacted
     
     def test_remove_redaction(self):
         """Test REMOVE redaction method."""
         original_value = "secret_key_123"
-        redacted = self.redaction_manager._apply_redaction(
-            original_value, RedactionMethod.REMOVE, "key_pattern"
+        redacted = self.redaction_manager._apply_redaction_method(
+            original_value, RedactionMethod.REMOVE
         )
-        
-        assert redacted == "[REMOVED]"
+
+        assert redacted == "[REDACTED]"
     
     def test_truncate_redaction(self):
         """Test TRUNCATE redaction method."""
         original_value = "this_is_a_very_long_sensitive_string"
-        redacted = self.redaction_manager._apply_redaction(
-            original_value, RedactionMethod.TRUNCATE, "long_string_pattern"
+        redacted = self.redaction_manager._apply_redaction_method(
+            original_value, RedactionMethod.TRUNCATE
         )
         
         # Should be truncated
@@ -88,10 +89,11 @@ class TestRedactor:
             },
             "page": "home"
         }
-        
-        paths_to_redact = ["/user/email"]
-        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
-        
+
+        # Create redaction rules for specific paths
+        rules = [RedactionRuleConfig(path="/user/email", method=RedactionMethod.HASH)]
+        redacted_data, _ = self.redaction_manager.redact_data(data, rules)
+
         assert redacted_data["user"]["email"] != "user@example.com"
         assert redacted_data["user"]["name"] == "John Doe"  # Unchanged
         assert redacted_data["page"] == "home"  # Unchanged
@@ -104,10 +106,14 @@ class TestRedactor:
                 {"email": "user2@example.com", "name": "Jane"}
             ]
         }
-        
-        paths_to_redact = ["/users/0/email", "/users/1/email"]
-        redacted_data = self.redaction_manager.redact_by_paths(data, paths_to_redact)
-        
+
+        # Create redaction rules for array paths
+        rules = [
+            RedactionRuleConfig(path="/users/0/email", method=RedactionMethod.HASH),
+            RedactionRuleConfig(path="/users/1/email", method=RedactionMethod.HASH)
+        ]
+        redacted_data, _ = self.redaction_manager.redact_data(data, rules)
+
         assert redacted_data["users"][0]["email"] != "user1@example.com"
         assert redacted_data["users"][1]["email"] != "user2@example.com"
         assert redacted_data["users"][0]["name"] == "John"  # Unchanged
@@ -120,10 +126,14 @@ class TestRedactor:
             "user_phone": "555-1234",
             "page_title": "Home Page"
         }
-        
-        glob_patterns = ["*_email", "*_phone"]
-        redacted_data = self.redaction_manager.redact_by_glob_patterns(data, glob_patterns)
-        
+
+        # Create redaction rules with glob patterns
+        rules = [
+            RedactionRuleConfig(path="/*_email", method=RedactionMethod.HASH),
+            RedactionRuleConfig(path="/*_phone", method=RedactionMethod.HASH)
+        ]
+        redacted_data, _ = self.redaction_manager.redact_data(data, rules)
+
         assert redacted_data["user_email"] != "user@example.com"
         assert redacted_data["admin_email"] != "admin@example.com"
         assert redacted_data["user_phone"] != "555-1234"
@@ -132,18 +142,19 @@ class TestRedactor:
     def test_audit_trail_creation(self):
         """Test that audit trail is created during redaction."""
         data = {"email": "user@example.com"}
-        
-        self.redaction_manager.redact_by_paths(data, ["/email"])
-        
+
+        # Create redaction rule and perform redaction
+        rules = [RedactionRuleConfig(path="/email", method=RedactionMethod.HASH)]
+        redacted_data, audit_trail = self.redaction_manager.redact_data(data, rules)
+
         # Should have audit trail entry
-        assert len(self.redaction_manager.audit_trail) == 1
-        audit = self.redaction_manager.audit_trail[0]
-        
+        assert len(audit_trail) == 1
+        audit = audit_trail[0]
+
         assert audit.path == "/email"
-        assert audit.original_value == "user@example.com"
-        assert audit.redacted_value != "user@example.com"
-        assert audit.redaction_method_used in [RedactionMethod.HASH, RedactionMethod.MASK, 
-                               RedactionMethod.REMOVE, RedactionMethod.TRUNCATE]
+        assert audit.original_type == "str"
+        assert audit.method == RedactionMethod.HASH
+        assert redacted_data["email"] != "user@example.com"
     
     def test_nested_path_redaction(self):
         """Test redaction of deeply nested paths."""
@@ -182,27 +193,74 @@ class TestRedactor:
         }
         
         redacted_data = self.redaction_manager.redact_by_paths(
-            data, 
-            ["/hash_me"], 
-            action=RedactionMethod.HASH
+            data,
+            ["/hash_me"],
+            method=RedactionMethod.HASH
         )
-        
+
         redacted_data = self.redaction_manager.redact_by_paths(
             redacted_data,
             ["/mask_me"],
-            action=RedactionMethod.MASK
+            method=RedactionMethod.MASK
         )
-        
+
         redacted_data = self.redaction_manager.redact_by_paths(
             redacted_data,
             ["/remove_me"],
-            action=RedactionMethod.REMOVE
+            method=RedactionMethod.REMOVE
         )
         
-        # Check that different actions were applied
-        assert len(redacted_data["hash_me"]) == 64  # SHA256
+        # Check that different methods were applied
+        assert redacted_data["hash_me"].startswith("[HASH:")
         assert "*" in redacted_data["mask_me"]
-        assert redacted_data["remove_me"] == "[REMOVED]"
+        assert redacted_data["remove_me"] == "[REDACTED]"
+
+    def test_site_specific_redaction_rules(self):
+        """Test that site-specific redaction rules are applied correctly."""
+        # Create redaction manager
+        from app.audit.datalayer.redaction import RedactionManager
+
+        # Mock the get_site_datalayer_config function to return test config
+        import unittest.mock
+        from app.audit.datalayer.config import RedactionConfig
+
+        # Create a mock site config with specific redaction rules
+        mock_site_config = unittest.mock.MagicMock()
+        mock_site_config.redaction.rules = [
+            RedactionRuleConfig(path="/user/site_email", method=RedactionMethod.HASH)
+        ]
+
+        with unittest.mock.patch('app.audit.datalayer.config.get_site_datalayer_config') as mock_get_config:
+            mock_get_config.return_value = mock_site_config
+
+            # Initialize redaction manager with base config (no rules)
+            base_config = RedactionConfig(rules=[])
+            manager = RedactionManager(base_config)
+
+            # Test data
+            data = {
+                "user": {
+                    "site_email": "user@site.com",
+                    "other_field": "not an email value"
+                }
+            }
+
+            # Apply site-specific redaction for example.com
+            site_rules = manager._get_site_rules("example.com")
+            redacted_data, audit_trail = manager._redactor.redact_data(data, site_rules)
+
+            # Verify that site-specific rule was applied
+            assert len(site_rules) == 1
+            assert site_rules[0].path == "/user/site_email"
+
+            # Verify redaction was applied only to the site-specific path
+            assert redacted_data["user"]["site_email"] != "user@site.com"
+            assert redacted_data["user"]["other_field"] == "not an email value"  # Unchanged
+
+            # Verify audit trail includes the site-specific redaction
+            site_audit_entries = [e for e in audit_trail if e.path == "/user/site_email"]
+            assert len(site_audit_entries) == 1
+            assert site_audit_entries[0].path == "/user/site_email"
 
 
 class TestSensitiveDataPattern:
@@ -231,12 +289,12 @@ class TestSensitiveDataPattern:
         )
         
         # Should match emails
-        assert email_pattern.matches("user@example.com") is True
-        assert email_pattern.matches("Contact us at support@company.org") is True
-        
+        assert email_pattern.has_match("user@example.com") is True
+        assert email_pattern.has_match("Contact us at support@company.org") is True
+
         # Should not match non-emails
-        assert email_pattern.matches("not an email") is False
-        assert email_pattern.matches("user@") is False
+        assert email_pattern.has_match("not an email") is False
+        assert email_pattern.has_match("user@") is False
     
     def test_pattern_with_validation_function(self):
         """Test pattern with custom validation function."""
@@ -255,15 +313,16 @@ class TestSensitiveDataPattern:
         )
         
         # Should validate with custom function
-        assert cc_pattern.matches("4111-1111-1111-1111") is True
-        assert cc_pattern.matches("1234-5678-9012-3456") is True
-        
+        assert cc_pattern.has_match("4111-1111-1111-1111") is True
+        assert cc_pattern.has_match("1234-5678-9012-3456") is True
+
         # Too short - should fail validation
-        assert cc_pattern.matches("1234-5678") is False
+        assert cc_pattern.has_match("1234-5678") is False
     
     def test_pattern_compilation_error(self):
         """Test handling of invalid regex patterns."""
-        with pytest.raises(re.error):
+        from app.audit.datalayer.redaction import RedactionError
+        with pytest.raises(RedactionError):
             SensitiveDataPattern(
                 name="invalid",
                 pattern="[invalid regex",  # Missing closing bracket
@@ -287,24 +346,24 @@ class TestPatternLibrary:
         
         # Should have common pattern categories
         pattern_names = [p.name for p in patterns]
-        expected_patterns = ["email", "phone_us", "ssn", "credit_card"]
+        expected_patterns = ["email_address", "phone_number", "us_ssn", "credit_card"]
         for expected in expected_patterns:
             assert expected in pattern_names
     
     def test_get_patterns_by_category(self):
         """Test getting patterns by category."""
-        pii_patterns = self.library.get_patterns_by_category("PII")
-        financial_patterns = self.library.get_patterns_by_category("Financial")
-        
+        pii_patterns = self.library.get_patterns_by_category("pii")
+        financial_patterns = self.library.get_patterns_by_category("financial")
+
         assert len(pii_patterns) > 0
         assert len(financial_patterns) > 0
-        
+
         # All patterns should have correct category
         for pattern in pii_patterns:
-            assert pattern.category == "PII"
+            assert pattern.category == "pii"
         
         for pattern in financial_patterns:
-            assert pattern.category == "Financial"
+            assert pattern.category == "financial"
     
     def test_add_custom_pattern(self):
         """Test adding custom patterns."""

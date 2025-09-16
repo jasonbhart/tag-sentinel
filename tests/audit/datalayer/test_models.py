@@ -41,35 +41,27 @@ class TestDataLayerSnapshot:
     def test_empty_datalayer_snapshot(self):
         """Test snapshot with empty dataLayer."""
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data=None,
-            processed_data=None
+            page_url="https://example.com",
+            exists=False,
+            latest=None
         )
-        
-        assert snapshot.raw_data is None
-        assert snapshot.processed_data is None
-        assert snapshot.size == 0
+
+        assert snapshot.latest is None
         assert snapshot.variable_count == 0
-        assert not snapshot.has_data
+        assert not snapshot.exists
     
     def test_snapshot_with_events(self):
         """Test snapshot with separated events."""
-        raw_data = [
-            {"event": "page_view", "page": "home"},
-            {"user_id": "123"},
-            {"event": "click", "element": "button"}
-        ]
-        
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data=raw_data,
-            processed_data={"user_id": "123"},
+            page_url="https://example.com",
+            exists=True,
+            latest={"user_id": "123"},
             events=[
                 {"event": "page_view", "page": "home"},
                 {"event": "click", "element": "button"}
             ]
         )
-        
+
         assert len(snapshot.events) == 2
         assert snapshot.events[0]["event"] == "page_view"
         assert snapshot.event_count == 2
@@ -77,29 +69,28 @@ class TestDataLayerSnapshot:
     def test_snapshot_metrics(self):
         """Test snapshot size and metrics calculations."""
         large_data = {f"var_{i}": f"value_{i}" for i in range(100)}
-        
+
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data=large_data,
-            processed_data=large_data
+            page_url="https://example.com",
+            exists=True,
+            latest=large_data
         )
-        
+
         assert snapshot.variable_count == 100
-        assert snapshot.size > 1000  # Should be substantial
-        assert snapshot.has_data
+        assert snapshot.exists
     
     def test_snapshot_json_serialization(self):
         """Test JSON serialization."""
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data={"test": "value"},
-            processed_data={"test": "value"}
+            page_url="https://example.com",
+            exists=True,
+            latest={"test": "value"}
         )
-        
-        json_data = snapshot.dict()
-        assert json_data["url"] == "https://example.com"
-        assert "captured_at" in json_data
-        assert json_data["size"] > 0
+
+        json_data = snapshot.model_dump()
+        assert str(json_data["page_url"]) == "https://example.com/"
+        assert "capture_time" in json_data
+        assert json_data["exists"] is True
 
 
 class TestValidationIssue:
@@ -108,61 +99,63 @@ class TestValidationIssue:
     def test_basic_issue_creation(self):
         """Test basic validation issue creation."""
         issue = ValidationIssue(
+            page_url="https://example.com",
             path="/user/id",
             message="Invalid user ID format",
             severity=ValidationSeverity.CRITICAL,
-            schema_path="/properties/user/properties/id"
+            schema_rule="/properties/user/properties/id"
         )
-        
+
         assert issue.path == "/user/id"
         assert issue.message == "Invalid user ID format"
         assert issue.severity == ValidationSeverity.CRITICAL
-        assert issue.is_error
-        assert not issue.is_warning
+        assert issue.is_critical
     
     def test_issue_severities(self):
         """Test different issue severities."""
         error_issue = ValidationIssue(
+            page_url="https://example.com",
             path="/test",
             message="Test error",
             severity=ValidationSeverity.CRITICAL
         )
-        
+
         warning_issue = ValidationIssue(
+            page_url="https://example.com",
             path="/test",
             message="Test warning",
             severity=ValidationSeverity.WARNING
         )
-        
+
         info_issue = ValidationIssue(
+            page_url="https://example.com",
             path="/test",
             message="Test info",
             severity=ValidationSeverity.INFO
         )
         
-        assert error_issue.is_error
-        assert not error_issue.is_warning
-        assert not error_issue.is_info
-        
-        assert not warning_issue.is_error
-        assert warning_issue.is_warning
-        assert not warning_issue.is_info
-        
-        assert not info_issue.is_error
-        assert not info_issue.is_warning
-        assert info_issue.is_info
+        assert error_issue.is_critical
+        assert error_issue.severity == ValidationSeverity.CRITICAL
+
+        assert not warning_issue.is_critical
+        assert warning_issue.severity == ValidationSeverity.WARNING
+
+        assert not info_issue.is_critical
+        assert info_issue.severity == ValidationSeverity.INFO
     
     def test_issue_with_context(self):
         """Test issue with additional context."""
         issue = ValidationIssue(
+            page_url="https://example.com",
             path="/ecommerce/purchase",
             message="Missing required field",
             severity=ValidationSeverity.CRITICAL,
-            context={"expected_type": "object", "actual_type": "null"}
+            expected="object",
+            observed="null"
         )
-        
-        assert issue.context["expected_type"] == "object"
-        assert issue.context["actual_type"] == "null"
+
+        assert issue.expected == "object"
+        assert issue.observed == "null"
 
 
 class TestDLContext:
@@ -171,37 +164,38 @@ class TestDLContext:
     def test_basic_context_creation(self):
         """Test basic context creation."""
         context = DLContext(
-            url="https://example.com",
-            page_title="Example Page"
+            env="test"
         )
-        
-        assert context.url == "https://example.com"
-        assert context.page_title == "Example Page"
-        assert isinstance(context.timestamp, datetime)
+
+        assert context.env == "test"
+        assert context.data_layer_object == "dataLayer"  # default value
+        assert context.max_depth == 6  # default value
     
     def test_context_with_metadata(self):
-        """Test context with metadata."""
-        metadata = {"campaign": "summer", "ab_test": "version_a"}
-        
+        """Test context with site-specific configuration."""
+        site_config = {"campaign": "summer", "ab_test": "version_a"}
+
         context = DLContext(
-            url="https://example.com/landing",
-            page_title="Landing Page",
-            metadata=metadata
+            env="staging",
+            site_config=site_config
         )
-        
-        assert context.metadata == metadata
-        assert context.metadata["campaign"] == "summer"
+
+        assert context.site_config == site_config
+        assert context.site_config["campaign"] == "summer"
     
-    def test_context_with_user_agent(self):
-        """Test context with user agent."""
-        user_agent = "Mozilla/5.0 (compatible; TestBot/1.0)"
-        
+    def test_context_with_custom_settings(self):
+        """Test context with custom capture settings."""
         context = DLContext(
-            url="https://example.com",
-            user_agent=user_agent
+            env="production",
+            data_layer_object="customDataLayer",
+            max_depth=10,
+            max_entries=1000
         )
-        
-        assert context.user_agent == user_agent
+
+        assert context.env == "production"
+        assert context.data_layer_object == "customDataLayer"
+        assert context.max_depth == 10
+        assert context.max_entries == 1000
 
 
 class TestDLResult:
@@ -210,33 +204,34 @@ class TestDLResult:
     def test_basic_result_creation(self):
         """Test basic result creation."""
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data={"test": "value"},
-            processed_data={"test": "value"}
+            page_url="https://example.com",
+            exists=True,
+            latest={"test": "value"}
         )
-        
+
         result = DLResult(snapshot=snapshot)
-        
+
         assert result.snapshot == snapshot
         assert result.issues == []
         assert len(result.aggregate_delta) == 0
     
     def test_result_with_validation_issues(self):
         """Test result with validation issues."""
-        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data={"test": "value"},
-            processed_data={"test": "value"}
+            page_url="https://example.com",
+            exists=True,
+            latest={"test": "value"}
         )
-        
+
         issues = [
             ValidationIssue(
+                page_url="https://example.com",
                 path="/test",
                 message="Invalid format",
                 severity=ValidationSeverity.CRITICAL
             ),
             ValidationIssue(
+                page_url="https://example.com",
                 path="/other",
                 message="Missing field",
                 severity=ValidationSeverity.WARNING
@@ -252,11 +247,10 @@ class TestDLResult:
     
     def test_result_with_processing_metadata(self):
         """Test result with processing metadata."""
-        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data={"user_id": "123"},
-            processed_data={"user_id": "123"}
+            page_url="https://example.com",
+            exists=True,
+            latest={"user_id": "123"}
         )
         
         result = DLResult(
@@ -265,21 +259,20 @@ class TestDLResult:
         )
         
         assert result.processing_time_ms == 150.5
-        assert result.snapshot.url == "https://example.com"
+        assert str(result.snapshot.page_url) == "https://example.com/"
     
     def test_result_summary_statistics(self):
         """Test result summary statistics."""
-        context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         snapshot = DataLayerSnapshot(
-            url="https://example.com",
-            raw_data={"test": "value"},
-            processed_data={"test": "value"}
+            page_url="https://example.com",
+            exists=True,
+            latest={"test": "value"}
         )
-        
+
         issues = [
-            ValidationIssue(path="/test1", message="Error 1", severity=ValidationSeverity.CRITICAL),
-            ValidationIssue(path="/test2", message="Error 2", severity=ValidationSeverity.CRITICAL),
-            ValidationIssue(path="/test3", message="Warning 1", severity=ValidationSeverity.WARNING),
+            ValidationIssue(page_url="https://example.com", path="/test1", message="Error 1", severity=ValidationSeverity.CRITICAL),
+            ValidationIssue(page_url="https://example.com", path="/test2", message="Error 2", severity=ValidationSeverity.CRITICAL),
+            ValidationIssue(page_url="https://example.com", path="/test3", message="Warning 1", severity=ValidationSeverity.WARNING),
         ]
         
         result = DLResult(
@@ -298,55 +291,62 @@ class TestDLAggregate:
         aggregate = DLAggregate(
             run_id="test-run-123",
             total_pages=10,
-            successful_captures=8,
-            failed_captures=2
+            pages_successful=8,
+            pages_failed=2
         )
-        
+
         assert aggregate.run_id == "test-run-123"
         assert aggregate.total_pages == 10
         assert aggregate.success_rate == 80.0
-        assert isinstance(aggregate.created_at, datetime)
+        assert isinstance(aggregate.start_time, datetime)
     
     def test_aggregate_with_variable_stats(self):
         """Test aggregate with variable statistics."""
-        variable_stats = {
-            "page_title": {"presence": 0.9, "example_values": ["Home", "About"]},
-            "user_id": {"presence": 0.7, "example_values": ["123", "456"]}
+        from app.audit.datalayer.models import VariablePresence
+
+        variables = {
+            "page_title": VariablePresence(
+                name="page_title",
+                path="/page_title",
+                pages_with_variable=9,
+                total_pages=10,
+                example_values=["Home", "About"]
+            ),
+            "user_id": VariablePresence(
+                name="user_id",
+                path="/user_id",
+                pages_with_variable=7,
+                total_pages=10,
+                example_values=["123", "456"]
+            )
         }
-        
+
         aggregate = DLAggregate(
             run_id="test-run-123",
             total_pages=10,
-            successful_captures=10,
-            failed_captures=0,
-            variable_stats=variable_stats
+            pages_successful=10,
+            pages_failed=0,
+            variables=variables
         )
-        
-        assert len(aggregate.variable_stats) == 2
-        assert aggregate.variable_stats["page_title"]["presence"] == 0.9
+
+        assert len(aggregate.variables) == 2
+        assert aggregate.variables["page_title"].presence_percentage == 90.0
     
     def test_aggregate_with_validation_summary(self):
-        """Test aggregate with validation summary."""
-        validation_summary = {
-            "total_issues": 15,
-            "error_count": 8,
-            "warning_count": 7,
-            "most_common_issues": [
-                {"message": "Missing required field", "count": 5},
-                {"message": "Invalid format", "count": 3}
-            ]
-        }
-        
+        """Test aggregate with validation statistics."""
         aggregate = DLAggregate(
             run_id="test-run-123",
             total_pages=10,
-            successful_captures=10,
-            failed_captures=0,
-            validation_summary=validation_summary
+            pages_successful=10,
+            pages_failed=0,
+            total_validation_issues=15,
+            critical_issues=8,
+            warning_issues=7
         )
         
-        assert aggregate.validation_summary["total_issues"] == 15
-        assert len(aggregate.validation_summary["most_common_issues"]) == 2
+        assert aggregate.total_validation_issues == 15
+        assert aggregate.critical_issues == 8
+        assert aggregate.warning_issues == 7
     
     def test_aggregate_success_rate_calculation(self):
         """Test success rate calculation edge cases."""
@@ -354,17 +354,17 @@ class TestDLAggregate:
         empty_aggregate = DLAggregate(
             run_id="empty-run",
             total_pages=0,
-            successful_captures=0,
-            failed_captures=0
+            pages_successful=0,
+            pages_failed=0
         )
         assert empty_aggregate.success_rate == 0.0
-        
+
         # Perfect success
         perfect_aggregate = DLAggregate(
             run_id="perfect-run",
             total_pages=5,
-            successful_captures=5,
-            failed_captures=0
+            pages_successful=5,
+            pages_failed=0
         )
         assert perfect_aggregate.success_rate == 100.0
     
@@ -373,15 +373,17 @@ class TestDLAggregate:
         aggregate = DLAggregate(
             run_id="test-run",
             total_pages=5,
-            successful_captures=4,
-            failed_captures=1,
-            variable_stats={"test": {"presence": 1.0}}
+            pages_successful=4,
+            pages_failed=1
         )
-        
-        json_data = aggregate.dict()
+
+        json_data = aggregate.model_dump()
         assert json_data["run_id"] == "test-run"
-        assert json_data["success_rate"] == 80.0
-        assert "created_at" in json_data
+        assert json_data["total_pages"] == 5
+        assert json_data["pages_successful"] == 4
+        assert "start_time" in json_data
+        # success_rate is a computed property, test it separately
+        assert aggregate.success_rate == 80.0
 
 
 

@@ -176,9 +176,9 @@ def init_default_patterns():
     
     patterns.add_pattern(
         "ga4_measurement_id",
-        r"G-[A-Z0-9]{10}",
+        r"G-[A-Z0-9]{7,14}",
         0,
-        "GA4 Measurement ID format",
+        "GA4 Measurement ID format (flexible length)",
         "ga4"
     )
     
@@ -451,7 +451,7 @@ class ParameterParser:
             return {}
     
     @staticmethod
-    def parse_url_encoded(query_string: str) -> Dict[str, Any]:
+    def parse_url_encoded(query_string: str) -> Dict[str, Union[str, List[str]]]:
         """Parse URL-encoded query string parameters.
         
         Args:
@@ -471,7 +471,7 @@ class ParameterParser:
             parsed = parse_qs(query_string, keep_blank_values=True)
             
             # Flatten single-item lists and decode values
-            result = {}
+            result: Dict[str, Union[str, List[str]]] = {}
             for key, values in parsed.items():
                 decoded_key = unquote_plus(key)
                 if len(values) == 1:
@@ -658,7 +658,7 @@ class ParameterParser:
         Returns:
             Dict with custom_dimensions and custom_metrics
         """
-        custom_data = {
+        custom_data: Dict[str, Dict[str, Any]] = {
             "custom_dimensions": {},
             "custom_metrics": {}
         }
@@ -691,7 +691,7 @@ class ParameterParser:
         Returns:
             Dict with validation results
         """
-        result = {
+        result: Dict[str, Any] = {
             "valid": True,
             "missing_params": [],
             "present_params": []
@@ -757,7 +757,7 @@ def validate_datalayer_structure(datalayer_data: Any) -> Dict[str, Any]:
     Returns:
         Validation result with structure analysis
     """
-    result = {
+    result: Dict[str, Any] = {
         "is_valid": False,
         "is_array": False,
         "total_events": 0,

@@ -19,27 +19,14 @@ from app.audit.datalayer.error_handling import (
     ErrorSeverity,
     DataLayerError,
     ErrorContext,
-    ResilientDataLayerService
+    ResilientDataLayerService,
+    CaptureError,
+    ValidationError,
+    RedactionError,
+    resilient_operation,
+    graceful_degradation
 )
 
-# Define missing classes for tests
-class CaptureError(Exception):
-    """Capture error for testing."""
-    def __init__(self, message, context=None):
-        super().__init__(message)
-        self.context = context or {}
-
-class ValidationError(Exception):
-    """Validation error for testing."""
-    def __init__(self, message, context=None):
-        super().__init__(message)
-        self.context = context or {}
-
-class RedactionError(Exception):
-    """Redaction error for testing."""
-    def __init__(self, message, context=None):
-        super().__init__(message)
-        self.context = context or {}
 
 # Define missing enums for tests
 class ErrorCategory:
@@ -156,7 +143,7 @@ class TestDataLayerErrorHandler:
         
         # Add some errors
         for i in range(10):
-            error = DataLayerError(f"Error {i}")
+            error = DataLayerError.create_simple(f"Error {i}")
             self.error_handler.handle_error(error, ComponentType.CAPTURE, {"attempt": i})
         
         # Add some successes (mock by setting total operations)
@@ -203,17 +190,20 @@ class TestDataLayerErrorHandler:
     
     def test_error_history_retention(self):
         """Test error history retention limits."""
+        # Create handler with small history limit for testing
+        test_handler = DataLayerErrorHandler(max_error_history=100)
+
         # Add many errors to test history retention
         for i in range(150):  # More than max_history_size (100)
-            error = DataLayerError(f"Error {i}")
-            self.error_handler.handle_error(error, ComponentType.CAPTURE, {})
-        
+            error = DataLayerError.create_simple(f"Error {i}")
+            test_handler.handle_error(error, ComponentType.CAPTURE, {})
+
         # Should not exceed max history size
-        assert len(self.error_handler.error_history) <= 100
+        assert len(test_handler.error_history) <= 100
         
         # Should keep most recent errors
-        latest_error = self.error_handler.error_history[-1]
-        assert "Error 149" in latest_error["error_message"]
+        latest_error = test_handler.error_history[-1]
+        assert "Error 149" in latest_error.message
     
     def test_health_check(self):
         """Test health check functionality."""
@@ -223,7 +213,7 @@ class TestDataLayerErrorHandler:
         
         # Add some errors
         for i in range(5):
-            error = DataLayerError(f"Error {i}")
+            error = DataLayerError.create_simple(f"Error {i}")
             self.error_handler.handle_error(error, ComponentType.CAPTURE, {})
         
         self.error_handler._total_operations = 10  # 50% error rate

@@ -220,7 +220,6 @@ class DataLayerBrowserIntegrator:
                 data_layer_object="dataLayer",  # Default object name
                 max_depth=6,
                 max_entries=500,
-                redact_paths=[],
                 site_config=context.metadata or {}
             )
             

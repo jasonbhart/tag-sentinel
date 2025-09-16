@@ -265,37 +265,40 @@ class GTMDetector(BaseDetector, ResilientDetector):
         return analysis
     
     def _extract_container_config(self, url: str) -> Dict[str, Any]:
-        """Extract container configuration from URL.
-        
+        """Extract container configuration from URL using parsed parameters.
+
         Args:
             url: GTM loader URL
-            
+
         Returns:
             Configuration information
         """
         config = {}
-        
-        # Check for environment/workspace parameters
-        if "gtm_auth" in url:
+
+        # Parse URL parameters to avoid false positives from substring checks
+        parsed_params = self._parse_gtm_url_parameters(url)
+
+        # Check for environment/workspace parameters using parsed data
+        if parsed_params.get("gtm_auth"):
             config["has_workspace_auth"] = True
             config["environment_type"] = "workspace"
         else:
             config["has_workspace_auth"] = False
             config["environment_type"] = "live"
-        
-        # Check for preview mode
-        if "gtm_preview" in url:
+
+        # Check for preview mode using parsed data
+        if parsed_params.get("gtm_preview"):
             config["preview_mode"] = True
         else:
             config["preview_mode"] = False
-        
+
         # Check for custom domain
         parsed_url = urlparse(url)
         if parsed_url.netloc != "www.googletagmanager.com":
             config["custom_domain"] = parsed_url.netloc
         else:
             config["custom_domain"] = None
-        
+
         return config
     
     def _create_container_event(self, container_info: Dict[str, Any], 
@@ -412,7 +415,7 @@ class GTMDetector(BaseDetector, ResilientDetector):
             )
         
         # Check for invalid container IDs
-        invalid_containers = [c for c in containers 
+        invalid_containers = [c for c in containers
                             if c.get("container_id") and not c.get("container_id_valid")]
         if invalid_containers:
             invalid_ids = [c["container_id"] for c in invalid_containers]
@@ -421,6 +424,30 @@ class GTMDetector(BaseDetector, ResilientDetector):
                 category=NoteCategory.VALIDATION,
                 invalid_container_ids=invalid_ids
             )
+
+        # Check for unexpected container IDs if expected IDs are configured
+        gtm_config = ctx.config.get("gtm", {})
+        expected_ids = gtm_config.get("expected_container_ids", [])
+        if expected_ids:
+            actual_ids = [c["container_id"] for c in valid_containers]
+            unexpected_ids = [id for id in actual_ids if id not in expected_ids]
+            missing_ids = [id for id in expected_ids if id not in actual_ids]
+
+            if unexpected_ids:
+                result.add_warning_note(
+                    f"Unexpected GTM container IDs detected: {unexpected_ids}",
+                    category=NoteCategory.CONFIGURATION,
+                    unexpected_container_ids=unexpected_ids,
+                    expected_container_ids=expected_ids
+                )
+
+            if missing_ids:
+                result.add_warning_note(
+                    f"Expected GTM container IDs not found: {missing_ids}",
+                    category=NoteCategory.CONFIGURATION,
+                    missing_container_ids=missing_ids,
+                    expected_container_ids=expected_ids
+                )
         
         # Check for failed container loads
         failed_containers = [c for c in containers if not c.get("load_successful")]

@@ -8,7 +8,6 @@ timing information, headers, and error handling.
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Set
-from urllib.parse import urlparse
 
 from playwright.async_api import Page, Request, Response
 
@@ -61,7 +60,7 @@ class NetworkObserver:
         """
         self._callbacks.append(callback)
     
-    def _create_request_log(self, request: Request) -> RequestLog:
+    def _create_request_log(self, request: Request, request_id: str) -> RequestLog:
         """Create initial RequestLog from Playwright Request.
         
         Args:
@@ -113,7 +112,7 @@ class NetworkObserver:
             resource_type=resource_type,
             request_headers=headers,
             request_body=request_body,
-            start_time=self._request_start_times.get(request.url, datetime.utcnow()),
+            start_time=self._request_start_times.get(request_id, datetime.utcnow()),
             status=RequestStatus.PENDING
         )
     
@@ -133,13 +132,13 @@ class NetworkObserver:
                 return None
             
             return TimingData(
-                dns_start=timing.get('dns_start'),
-                dns_end=timing.get('dns_end'),
-                connect_start=timing.get('connect_start'),
-                connect_end=timing.get('connect_end'),
-                request_start=timing.get('request_start'),
-                response_start=timing.get('response_start'),
-                response_end=timing.get('response_end'),
+                dns_start=timing.get('domainLookupStart'),
+                dns_end=timing.get('domainLookupEnd'),
+                connect_start=timing.get('connectStart'),
+                connect_end=timing.get('connectEnd'),
+                request_start=timing.get('requestStart'),
+                response_start=timing.get('responseStart'),
+                response_end=timing.get('responseEnd'),
             )
             
         except Exception as e:
@@ -156,7 +155,7 @@ class NetworkObserver:
         self._request_start_times[request_id] = datetime.utcnow()
 
         try:
-            request_log = self._create_request_log(request)
+            request_log = self._create_request_log(request, request_id)
             # Store by unique ID for correctness (prevents overwrites)
             self._requests_by_id[request_id] = request_log
             # Also store by URL for test compatibility (latest request wins)
@@ -333,7 +332,7 @@ class NetworkObserver:
         if request_id not in self._requests_by_id:
             logger.warning(f"Request failed for unknown request: {request_id}")
             # Create a failed request log for unknown requests
-            request_log = self._create_request_log(request)
+            request_log = self._create_request_log(request, request_id)
             self._requests_by_id[request_id] = request_log
             self.requests[request.url] = request_log
 

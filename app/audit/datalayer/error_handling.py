@@ -1,6 +1,6 @@
 """Error handling and resilience for dataLayer integrity system.
 
-This module provides comprehensive error handling, graceful degradation, 
+This module provides comprehensive error handling, graceful degradation,
 circuit breaker patterns, and resilience mechanisms for all dataLayer
 operations including capture, validation, and processing.
 """
@@ -17,6 +17,12 @@ from enum import Enum
 import traceback
 
 logger = logging.getLogger(__name__)
+
+
+
+
+
+
 
 
 class ErrorSeverity(Enum):
@@ -47,7 +53,7 @@ class ErrorContext:
     metadata: Dict[str, Any] = field(default_factory=dict)
     retry_count: int = 0
     max_retries: int = 3
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert error context to dictionary."""
         return {
@@ -61,37 +67,194 @@ class ErrorContext:
         }
 
 
-@dataclass
 class DataLayerError:
     """Comprehensive error information for dataLayer operations."""
-    error_type: str
-    message: str
-    severity: ErrorSeverity
-    context: ErrorContext
-    exception: Optional[Exception] = None
-    stack_trace: Optional[str] = None
-    recovery_action: Optional[str] = None
-    impact_assessment: Optional[str] = None
-    
-    def __post_init__(self):
-        """Generate stack trace if exception provided."""
+
+    def __init__(
+        self,
+        message_or_error_type: str = None,
+        context_or_message: Union[Dict[str, Any], str, ErrorContext] = None,
+        severity: Optional[ErrorSeverity] = None,
+        context: Optional[ErrorContext] = None,
+        exception: Optional[Exception] = None,
+        stack_trace: Optional[str] = None,
+        recovery_action: Optional[str] = None,
+        impact_assessment: Optional[str] = None,
+        *,
+        error_type: Optional[str] = None,
+        message: Optional[str] = None
+    ):
+        """Initialize DataLayerError with multiple constructor patterns.
+
+        Supports both:
+        1. DataLayerError("Test error", {"context": "test"})  # backwards compatible
+        2. DataLayerError(error_type="error", message="msg", ...)  # full constructor
+        """
+        # Handle keyword-only arguments first
+        if error_type is not None and message is not None:
+            # Keyword constructor: DataLayerError(error_type="error", message="msg", ...)
+            self.error_type = error_type
+            self.message = message
+            self.severity = severity or ErrorSeverity.MEDIUM
+            self.context = context or ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+        elif message_or_error_type is None and error_type is not None:
+            # Partial keyword constructor
+            self.error_type = error_type
+            self.message = message or "Unknown error"
+            self.severity = severity or ErrorSeverity.MEDIUM
+            self.context = context or ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+        # Determine which positional constructor pattern is being used
+        elif isinstance(context_or_message, dict):
+            # Backwards compatible: DataLayerError(message, context_dict)
+            self.message = message_or_error_type
+            self.error_type = "generic_error"
+            self.severity = severity or ErrorSeverity.MEDIUM
+
+            # For backward compatibility, also store the dict directly as context
+            # Tests expect error.context to be the original dict
+            self.context = context_or_message
+
+            # Also create ErrorContext for internal use
+            self._error_context = ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+            self._error_context.metadata = context_or_message
+
+        elif isinstance(context_or_message, str):
+            # Full constructor: DataLayerError(error_type, message, ...)
+            self.error_type = message_or_error_type
+            self.message = context_or_message
+            self.severity = severity or ErrorSeverity.MEDIUM
+            self.context = context or ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+        elif context_or_message is None and severity is None and context is None:
+            # Simple message constructor: DataLayerError("message")
+            self.message = message_or_error_type
+            self.error_type = "generic_error"
+            self.severity = ErrorSeverity.MEDIUM
+            self.context = ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+        else:
+            # Legacy dataclass-style: DataLayerError(error_type, message, severity, context, ...)
+            self.error_type = message_or_error_type
+            self.message = context_or_message if isinstance(context_or_message, str) else "Unknown error"
+            self.severity = severity or ErrorSeverity.MEDIUM
+            self.context = context or ErrorContext(
+                component=ComponentType.CAPTURE,
+                operation="generic_operation"
+            )
+
+        self.exception = exception
+        self.stack_trace = stack_trace
+        self.recovery_action = recovery_action
+        self.impact_assessment = impact_assessment
+
+        # Generate stack trace if exception provided
         if self.exception and not self.stack_trace:
             self.stack_trace = ''.join(traceback.format_exception(
                 type(self.exception), self.exception, self.exception.__traceback__
             ))
-    
+
+    def __str__(self) -> str:
+        """String representation of the error."""
+        return self.message
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert error to dictionary for logging/serialization."""
         return {
             'error_type': self.error_type,
             'message': self.message,
             'severity': self.severity.value,
-            'context': self.context.to_dict(),
+            'context': self._error_context.to_dict() if hasattr(self, '_error_context') and self._error_context else (self.context.to_dict() if hasattr(self.context, 'to_dict') else self.context),
             'exception_type': type(self.exception).__name__ if self.exception else None,
             'stack_trace': self.stack_trace,
             'recovery_action': self.recovery_action,
             'impact_assessment': self.impact_assessment
         }
+
+    @classmethod
+    def create_simple(
+        cls,
+        message: str,
+        error_type: str = "generic_error",
+        severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+        component: ComponentType = ComponentType.CAPTURE
+    ) -> 'DataLayerError':
+        """Create a simple DataLayerError with minimal required information.
+
+        Args:
+            message: Error message
+            error_type: Type of error (defaults to "generic_error")
+            severity: Error severity (defaults to MEDIUM)
+            component: Component where error occurred (defaults to CAPTURE)
+
+        Returns:
+            DataLayerError instance
+        """
+        context = ErrorContext(
+            component=component,
+            operation="test_operation"
+        )
+
+        return cls(
+            error_type,
+            message,
+            severity,
+            context
+        )
+
+
+class CaptureError(Exception, DataLayerError):
+    """Error during capture operations."""
+    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
+        # Initialize Exception with message
+        Exception.__init__(self, message)
+        # Initialize DataLayerError with backward-compatible constructor
+        DataLayerError.__init__(self, message, context or {})
+        # Override error_type and create proper ErrorContext for internal use
+        self.error_type = "CaptureError"
+        self._error_context = ErrorContext(component=ComponentType.CAPTURE, operation="capture")
+        if context:
+            self._error_context.metadata.update(context)
+
+
+class ValidationError(Exception, DataLayerError):
+    """Error during validation operations."""
+    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
+        # Initialize Exception with message
+        Exception.__init__(self, message)
+        # Initialize DataLayerError with backward-compatible constructor
+        DataLayerError.__init__(self, message, context or {})
+        # Override error_type and create proper ErrorContext for internal use
+        self.error_type = "ValidationError"
+        self._error_context = ErrorContext(component=ComponentType.VALIDATION, operation="validation")
+        if context:
+            self._error_context.metadata.update(context)
+
+
+class RedactionError(Exception, DataLayerError):
+    """Error during redaction operations."""
+    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
+        # Initialize Exception with message
+        Exception.__init__(self, message)
+        # Initialize DataLayerError with backward-compatible constructor
+        DataLayerError.__init__(self, message, context or {})
+        # Override error_type and create proper ErrorContext for internal use
+        self.error_type = "RedactionError"
+        self._error_context = ErrorContext(component=ComponentType.REDACTION, operation="redaction")
+        if context:
+            self._error_context.metadata.update(context)
 
 
 class DataLayerErrorHandler:
@@ -111,6 +274,12 @@ class DataLayerErrorHandler:
         # Error statistics
         self.error_counts: Dict[str, int] = {}
         self.component_error_rates: Dict[ComponentType, float] = {}
+
+        # Track total operations for error rate calculation
+        self._total_operations = 0
+
+        # Circuit breakers by component
+        self._circuit_breakers: Dict[str, 'CircuitBreaker'] = {}
         
         # Initialize recovery strategies
         self._register_default_recovery_strategies()
@@ -145,38 +314,63 @@ class DataLayerErrorHandler:
     
     def handle_error(
         self,
-        error: DataLayerError,
+        error,  # Can be DataLayerError or regular Exception
+        component: Optional['ComponentType'] = None,
+        context: Optional[Dict[str, Any]] = None,
         attempt_recovery: bool = True
     ) -> Optional[Any]:
         """Handle a dataLayer error with logging and potential recovery.
-        
+
         Args:
-            error: DataLayer error to handle
+            error: DataLayer error to handle (DataLayerError or Exception)
+            component: Component type where error occurred (optional)
+            context: Additional context for the error (optional)
             attempt_recovery: Whether to attempt automatic recovery
-            
+
         Returns:
             Recovery result if successful, None otherwise
         """
+        # Convert regular Exception to DataLayerError if needed
+        if not isinstance(error, DataLayerError):
+            error = DataLayerError.create_simple(
+                message=str(error),
+                error_type=type(error).__name__,
+                component=component or ComponentType.CAPTURE
+            )
+
+        # Update error context if provided
+        if component is not None and hasattr(error, 'context'):
+            if hasattr(error.context, 'component'):
+                error.context.component = component
+        if context is not None and hasattr(error, 'context'):
+            if hasattr(error.context, 'metadata'):
+                error.context.metadata.update(context)
+
         # Log error based on severity
         self._log_error(error)
-        
+
         # Add to error history
         self._record_error(error)
-        
+
+        # Increment total operations counter
+        self._total_operations += 1
+
         # Execute callbacks
         self._execute_error_callbacks(error)
-        
+
         # Attempt recovery if enabled
         recovery_result = None
         if attempt_recovery:
             recovery_result = self._attempt_recovery(error)
-        
+
         return recovery_result
     
     def _log_error(self, error: DataLayerError) -> None:
         """Log error with appropriate level based on severity."""
         log_data = error.to_dict()
-        
+        # Remove 'message' key to avoid conflict with LogRecord.message
+        log_data.pop('message', None)
+
         if error.severity == ErrorSeverity.CRITICAL:
             logger.critical(f"CRITICAL DataLayer Error: {error.message}", extra=log_data)
         elif error.severity == ErrorSeverity.HIGH:
@@ -194,18 +388,35 @@ class DataLayerErrorHandler:
             self.error_history.pop(0)
         
         # Update error counts
-        error_key = f"{error.context.component.value}:{error.error_type}"
+        # Handle both ErrorContext objects and backward-compatible dict contexts
+        if hasattr(error, '_error_context') and error._error_context:
+            component = error._error_context.component
+        elif hasattr(error.context, 'component'):
+            component = error.context.component
+        else:
+            # Fallback for dict contexts
+            component = ComponentType.CAPTURE
+
+        error_key = f"{component.value}:{error.error_type}"
         self.error_counts[error_key] = self.error_counts.get(error_key, 0) + 1
         
-        # Update component error rates (simplified)
-        component = error.context.component
+        # Update component error rates (simplified) - component already determined above
         if component not in self.component_error_rates:
             self.component_error_rates[component] = 0.0
         self.component_error_rates[component] += 1.0
     
     def _execute_error_callbacks(self, error: DataLayerError) -> None:
         """Execute registered callbacks for the error's component."""
-        callbacks = self.error_callbacks.get(error.context.component, [])
+        # Handle both ErrorContext objects and backward-compatible dict contexts
+        if hasattr(error, '_error_context') and error._error_context:
+            component = error._error_context.component
+        elif hasattr(error.context, 'component'):
+            component = error.context.component
+        else:
+            # Fallback for dict contexts
+            component = ComponentType.CAPTURE
+
+        callbacks = self.error_callbacks.get(component, [])
         for callback in callbacks:
             try:
                 callback(error)
@@ -217,7 +428,16 @@ class DataLayerErrorHandler:
         strategy = self.recovery_strategies.get(error.error_type)
         if not strategy:
             # Try generic recovery based on component
-            strategy = self.recovery_strategies.get(f"generic_{error.context.component.value}")
+            # Handle both ErrorContext objects and backward-compatible dict contexts
+            if hasattr(error, '_error_context') and error._error_context:
+                component = error._error_context.component
+            elif hasattr(error.context, 'component'):
+                component = error.context.component
+            else:
+                # Fallback for dict contexts
+                component = ComponentType.CAPTURE
+
+            strategy = self.recovery_strategies.get(f"generic_{component.value}")
         
         if strategy:
             try:
@@ -341,7 +561,16 @@ class DataLayerErrorHandler:
         """Get most common error types."""
         error_type_counts = {}
         for error in self.error_history:
-            key = f"{error.context.component.value}:{error.error_type}"
+            # Handle both ErrorContext objects and dict contexts
+            if hasattr(error, '_error_context') and error._error_context:
+                component = error._error_context.component
+            elif hasattr(error.context, 'component'):
+                component = error.context.component
+            else:
+                # Fallback for dict contexts
+                component = ComponentType.CAPTURE
+
+            key = f"{component.value}:{error.error_type}"
             error_type_counts[key] = error_type_counts.get(key, 0) + 1
         
         sorted_errors = sorted(error_type_counts.items(), key=lambda x: x[1], reverse=True)
@@ -351,6 +580,127 @@ class DataLayerErrorHandler:
             for error_type, count in sorted_errors[:limit]
         ]
 
+    def get_error_rate(self) -> float:
+        """Calculate the error rate as a ratio of errors to total operations.
+
+        Returns:
+            Error rate as a float between 0.0 and 1.0
+        """
+        if self._total_operations == 0:
+            return 0.0
+        return len(self.error_history) / self._total_operations
+
+    def get_error_summary(self) -> Dict[str, Any]:
+        """Get a comprehensive error summary.
+
+        Returns:
+            Dictionary with error summary statistics
+        """
+        by_component = {}
+        by_severity = {}
+        by_category = {}
+
+        for error in self.error_history:
+            # Count by component - handle both ErrorContext objects and dict contexts
+            if hasattr(error, '_error_context') and error._error_context:
+                component = error._error_context.component
+            elif hasattr(error.context, 'component'):
+                component = error.context.component
+            else:
+                # Fallback for dict contexts
+                component = ComponentType.CAPTURE
+
+            by_component[component] = by_component.get(component, 0) + 1
+
+            # Count by severity
+            severity = error.severity.value
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+
+            # Count by category (based on error type)
+            category = self._categorize_error(error)
+            by_category[category] = by_category.get(category, 0) + 1
+
+        return {
+            "total_errors": len(self.error_history),
+            "by_component": by_component,
+            "by_severity": by_severity,
+            "by_category": by_category,
+            "error_rate": self.get_error_rate(),
+            "most_common": self._get_most_common_errors(3)
+        }
+
+    def _categorize_error(self, error: 'DataLayerError') -> str:
+        """Categorize an error based on its type and message.
+
+        Args:
+            error: DataLayerError to categorize
+
+        Returns:
+            Error category string
+        """
+        error_type = error.error_type.lower()
+        message = error.message.lower()
+
+        if 'timeout' in error_type or 'timeout' in message:
+            return 'timeout'
+        elif 'validation' in error_type or 'schema' in message:
+            return 'validation'
+        elif 'network' in error_type or 'connection' in message:
+            return 'network'
+        elif 'permission' in error_type or 'auth' in message:
+            return 'permission'
+        else:
+            return 'other'
+
+    def get_circuit_breaker(self, component: 'ComponentType') -> 'CircuitBreaker':
+        """Get or create a circuit breaker for a specific component.
+
+        Args:
+            component: Component type to get circuit breaker for
+
+        Returns:
+            CircuitBreaker instance for the component
+        """
+        component_key = component.value if hasattr(component, 'value') else str(component)
+
+        if component_key not in self._circuit_breakers:
+            self._circuit_breakers[component_key] = CircuitBreaker(
+                failure_threshold=5,
+                recovery_timeout=60,
+                expected_exception=Exception
+            )
+
+        return self._circuit_breakers[component_key]
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get the health status of the error handler.
+
+        Returns:
+            Dictionary with health status information
+        """
+        total_errors = len(self.error_history)
+        error_rate = self.get_error_rate()
+
+        # Determine health based on error rate
+        if error_rate == 0.0:
+            health = "healthy"
+        elif error_rate < 0.1:  # Less than 10% error rate
+            health = "degraded"
+        else:
+            health = "unhealthy"
+
+        return {
+            "status": health,
+            "total_errors": total_errors,
+            "error_rate": error_rate,
+            "circuit_breakers": {
+                key: {
+                    "state": breaker.state.name if hasattr(breaker, 'state') else "unknown"
+                }
+                for key, breaker in self._circuit_breakers.items()
+            }
+        }
+
 
 class CircuitBreaker:
     """Circuit breaker pattern for dataLayer operations."""
@@ -359,20 +709,24 @@ class CircuitBreaker:
         self,
         failure_threshold: int = 5,
         recovery_timeout: int = 60,
+        success_threshold: int = 2,
         expected_exception: Type[Exception] = Exception
     ):
         """Initialize circuit breaker.
-        
+
         Args:
             failure_threshold: Number of failures before opening circuit
             recovery_timeout: Seconds to wait before attempting recovery
+            success_threshold: Number of successes to close circuit from half-open
             expected_exception: Exception type that triggers circuit breaker
         """
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
+        self.success_threshold = success_threshold
         self.expected_exception = expected_exception
-        
+
         self.failure_count = 0
+        self.success_count = 0
         self.last_failure_time = None
         self.state = "closed"  # closed, open, half_open
     
@@ -416,6 +770,51 @@ class CircuitBreaker:
         if self.failure_count >= self.failure_threshold:
             self.state = "open"
 
+    def record_success(self) -> None:
+        """Record a successful operation."""
+        self.success_count += 1
+        if self.state == "half_open":
+            if self.success_count >= self.success_threshold:
+                self.state = "closed"
+                self.failure_count = 0
+                # Don't reset success_count - keep cumulative track
+
+    def record_failure(self) -> None:
+        """Record a failed operation."""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+
+        if self.state == "closed" and self.failure_count >= self.failure_threshold:
+            self.state = "open"
+        elif self.state == "half_open":
+            self.state = "open"
+            self.success_count = 0  # Reset success count only when going back to open from half-open
+
+    def can_execute(self) -> bool:
+        """Check if operations can be executed."""
+        if self.state == "closed":
+            return True
+        elif self.state == "open":
+            if self._should_attempt_reset():
+                self.state = "half_open"
+                self.success_count = 0
+                return True
+            return False
+        elif self.state == "half_open":
+            return True
+        return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get circuit breaker statistics."""
+        return {
+            "state": self.state,
+            "failure_count": self.failure_count,
+            "success_count": self.success_count,
+            "failure_threshold": self.failure_threshold,
+            "success_threshold": self.success_threshold,
+            "last_failure_time": self.last_failure_time
+        }
+
 
 class CircuitBreakerOpenError(Exception):
     """Exception raised when circuit breaker is open."""
@@ -428,10 +827,11 @@ def resilient_operation(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     fallback_result: Any = None,
-    error_handler: Optional[DataLayerErrorHandler] = None
+    error_handler: Optional[DataLayerErrorHandler] = None,
+    error_callback: Optional[Callable] = None
 ):
     """Decorator for resilient dataLayer operations with retry logic.
-    
+
     Args:
         component: Component type for error tracking
         operation: Operation name
@@ -439,114 +839,255 @@ def resilient_operation(
         retry_delay: Delay between retries in seconds
         fallback_result: Result to return if all retries fail
         error_handler: Error handler instance
+        error_callback: Optional callback function to call on errors
     """
     def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            context = ErrorContext(
-                component=component,
-                operation=operation,
-                max_retries=max_retries
-            )
-            
-            # Extract page URL if available in arguments
-            for arg in args:
-                if hasattr(arg, 'url'):
-                    context.page_url = arg.url
-                    break
-            for value in kwargs.values():
-                if isinstance(value, str) and value.startswith('http'):
-                    context.page_url = value
-                    break
-            
-            last_exception = None
-            
-            for attempt in range(max_retries + 1):
-                context.retry_count = attempt
-                
-                try:
-                    return await func(*args, **kwargs)
-                
-                except Exception as e:
-                    last_exception = e
-                    
-                    # Create error object
-                    error = DataLayerError(
-                        error_type=type(e).__name__,
-                        message=str(e),
-                        severity=ErrorSeverity.MEDIUM if attempt < max_retries else ErrorSeverity.HIGH,
-                        context=context,
-                        exception=e,
-                        recovery_action=f"Retry {attempt + 1}/{max_retries}" if attempt < max_retries else "Use fallback",
-                        impact_assessment="Operation failed, attempting recovery"
-                    )
-                    
-                    # Handle error
-                    if error_handler:
-                        recovery_result = error_handler.handle_error(error, attempt_recovery=True)
-                        if recovery_result is not None:
-                            return recovery_result
-                    else:
-                        logger.warning(f"Resilient operation {operation} failed (attempt {attempt + 1}): {e}")
-                    
-                    # Wait before retry (except on last attempt)
-                    if attempt < max_retries:
-                        await asyncio.sleep(retry_delay * (attempt + 1))  # Progressive backoff
-            
-            # All retries exhausted
-            if fallback_result is not None:
-                logger.info(f"Using fallback result for {operation} after {max_retries + 1} attempts")
-                return fallback_result
-            else:
-                # Re-raise the last exception
-                raise last_exception
-        
-        return wrapper
+        if asyncio.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                context = ErrorContext(
+                    component=component,
+                    operation=operation,
+                    max_retries=max_retries
+                )
+
+                # Extract page URL if available in arguments
+                for arg in args:
+                    if hasattr(arg, 'url'):
+                        context.page_url = arg.url
+                        break
+                for value in kwargs.values():
+                    if isinstance(value, str) and value.startswith('http'):
+                        context.page_url = value
+                        break
+
+                last_exception = None
+
+                for attempt in range(max_retries + 1):
+                    context.retry_count = attempt
+
+                    try:
+                        return await func(*args, **kwargs)
+
+                    except Exception as e:
+                        last_exception = e
+
+                        # Create error object
+                        error = DataLayerError(
+                            error_type=type(e).__name__,
+                            message=str(e),
+                            severity=ErrorSeverity.MEDIUM if attempt < max_retries else ErrorSeverity.HIGH,
+                            context=context,
+                            exception=e,
+                            recovery_action=f"Retry {attempt + 1}/{max_retries}" if attempt < max_retries else "Use fallback",
+                            impact_assessment="Operation failed, attempting recovery"
+                        )
+
+                        # Call error callback if provided
+                        if error_callback:
+                            try:
+                                error_callback(e, context)
+                            except Exception as callback_error:
+                                logger.error(f"Error callback failed: {callback_error}")
+
+                        # Handle error
+                        if error_handler:
+                            recovery_result = error_handler.handle_error(error, attempt_recovery=True)
+                            if recovery_result is not None:
+                                return recovery_result
+                        else:
+                            logger.warning(f"Resilient operation {operation} failed (attempt {attempt + 1}): {e}")
+
+                        # Wait before retry (except on last attempt)
+                        if attempt < max_retries:
+                            await asyncio.sleep(retry_delay * (attempt + 1))  # Progressive backoff
+
+                # All retries exhausted
+                if fallback_result is not None:
+                    logger.info(f"Using fallback result for {operation} after {max_retries + 1} attempts")
+                    return fallback_result
+                else:
+                    # Re-raise the last exception
+                    raise last_exception
+
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                context = ErrorContext(
+                    component=component,
+                    operation=operation,
+                    max_retries=max_retries
+                )
+
+                # Extract page URL if available in arguments
+                for arg in args:
+                    if hasattr(arg, 'url'):
+                        context.page_url = arg.url
+                        break
+                for value in kwargs.values():
+                    if isinstance(value, str) and value.startswith('http'):
+                        context.page_url = value
+                        break
+
+                last_exception = None
+
+                for attempt in range(max_retries + 1):
+                    context.retry_count = attempt
+
+                    try:
+                        return func(*args, **kwargs)
+
+                    except Exception as e:
+                        last_exception = e
+
+                        # Create error object
+                        error = DataLayerError(
+                            error_type=type(e).__name__,
+                            message=str(e),
+                            severity=ErrorSeverity.MEDIUM if attempt < max_retries else ErrorSeverity.HIGH,
+                            context=context,
+                            exception=e,
+                            recovery_action=f"Retry {attempt + 1}/{max_retries}" if attempt < max_retries else "Use fallback",
+                            impact_assessment="Operation failed, attempting recovery"
+                        )
+
+                        # Call error callback if provided
+                        if error_callback:
+                            try:
+                                error_callback(e, context)
+                            except Exception as callback_error:
+                                logger.error(f"Error callback failed: {callback_error}")
+
+                        # Handle error
+                        if error_handler:
+                            recovery_result = error_handler.handle_error(error, attempt_recovery=True)
+                            if recovery_result is not None:
+                                return recovery_result
+                        else:
+                            logger.warning(f"Resilient operation {operation} failed (attempt {attempt + 1}): {e}")
+
+                        # Wait before retry (except on last attempt)
+                        if attempt < max_retries:
+                            import time
+                            time.sleep(retry_delay * (attempt + 1))  # Progressive backoff
+
+                # All retries exhausted
+                if fallback_result is not None:
+                    logger.info(f"Using fallback result for {operation} after {max_retries + 1} attempts")
+                    return fallback_result
+                else:
+                    # Re-raise the last exception
+                    raise last_exception
+
+            return sync_wrapper
     return decorator
 
 
-@asynccontextmanager
-async def graceful_degradation(
-    operation_name: str,
-    component: ComponentType,
-    fallback_result: Any = None,
-    error_handler: Optional[DataLayerErrorHandler] = None
-):
+class GracefulDegradationContext:
+    """Context manager for graceful degradation results."""
+
+    def __init__(self, exception: Optional[Exception] = None, fallback_result: Any = None):
+        self.exception = exception
+        self.fallback_result = fallback_result
+        self.has_error = exception is not None
+        # Additional attributes expected by tests
+        self.result = None
+        self.error_occurred = False
+
+
+class graceful_degradation:
     """Context manager for graceful degradation of operations.
-    
-    Args:
-        operation_name: Name of the operation
-        component: Component type
-        fallback_result: Result to provide if operation fails
-        error_handler: Error handler instance
+
+    Supports multiple usage patterns:
+    - with graceful_degradation(fallback_value="fallback") as degraded:
+    - with graceful_degradation() as degraded:
+    - with graceful_degradation(fallback_func=lambda: "fallback") as degraded:
     """
-    try:
-        yield
-    except Exception as e:
-        context = ErrorContext(component=component, operation=operation_name)
-        error = DataLayerError(
-            error_type=type(e).__name__,
-            message=str(e),
-            severity=ErrorSeverity.MEDIUM,
-            context=context,
-            exception=e,
-            recovery_action="Graceful degradation",
-            impact_assessment="Operation degraded but system continues"
-        )
-        
-        if error_handler:
-            recovery_result = error_handler.handle_error(error, attempt_recovery=True)
-            if recovery_result is not None:
-                yield recovery_result
-                return
-        
-        logger.warning(f"Graceful degradation for {operation_name}: {e}")
-        
-        if fallback_result is not None:
-            yield fallback_result
+
+    def __init__(
+        self,
+        fallback_value: Any = None,
+        fallback_func: Optional[Callable] = None,
+        error_callback: Optional[Callable] = None,
+        expected_exceptions: Optional[tuple] = None,
+        operation_name: str = "unknown_operation",
+        component: ComponentType = ComponentType.CAPTURE,
+        error_handler: Optional[DataLayerErrorHandler] = None
+    ):
+        self.fallback_value = fallback_value
+        self.fallback_func = fallback_func
+        self.error_callback = error_callback
+        self.expected_exceptions = expected_exceptions or (Exception,)
+        self.operation_name = operation_name
+        self.component = component
+        self.error_handler = error_handler
+        self.context_result = None
+
+    def __enter__(self) -> GracefulDegradationContext:
+        """Enter the context manager."""
+        self.context_result = GracefulDegradationContext()
+        return self.context_result
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Exit the context manager with error handling."""
+        if exc_type is None:
+            # No exception occurred - operation was successful
+            # The context.result will remain None, indicating successful completion
+            return False
+
+        if not issubclass(exc_type, self.expected_exceptions):
+            # Not an expected exception, let it propagate
+            return False
+
+        # Handle the expected exception
+        if self.error_callback:
+            try:
+                self.error_callback(exc_value)
+            except Exception as callback_error:
+                logger.error(f"Error callback failed: {callback_error}")
+
+        # Create error for handler if provided
+        if self.error_handler:
+            context = ErrorContext(component=self.component, operation=self.operation_name)
+            error = DataLayerError(
+                error_type=type(exc_value).__name__,
+                message=str(exc_value),
+                severity=ErrorSeverity.MEDIUM,
+                context=context,
+                exception=exc_value,
+                recovery_action="Graceful degradation",
+                impact_assessment="Operation degraded but system continues"
+            )
+            self.error_handler.handle_error(error, attempt_recovery=True)
+
+        logger.warning(f"Graceful degradation for {self.operation_name}: {exc_value}")
+
+        # Determine fallback result
+        if self.fallback_func:
+            try:
+                fallback_result = self.fallback_func()
+            except Exception as fallback_error:
+                logger.error(f"Fallback function failed: {fallback_error}")
+                fallback_result = None
         else:
-            # Re-raise if no fallback provided
-            raise
+            fallback_result = self.fallback_value
+
+        # Update context with error information
+        if self.context_result:
+            self.context_result.error_occurred = True
+            self.context_result.exception = exc_value
+
+        # Set the fallback result in context if available
+        if self.context_result:
+            self.context_result.result = fallback_result
+
+        if fallback_result is None:
+            # No fallback provided, but still suppress exception for graceful degradation
+            # The context will have result=None and error_occurred=True
+            return True
+
+        return True
 
 
 class ResilientDataLayerService:

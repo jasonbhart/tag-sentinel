@@ -212,7 +212,6 @@ class DataLayerService:
             max_depth=site_config.capture.max_depth,
             max_entries=site_config.capture.max_entries,
             max_size_bytes=site_config.capture.max_size_bytes,
-            redact_paths=[rule.path for rule in site_config.redaction.rules],
             schema_path=site_config.validation.schema_path
         )
         

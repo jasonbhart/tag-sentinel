@@ -55,11 +55,7 @@ class DLContext(BaseModel):
         description="Maximum capture size in bytes"
     )
     
-    # Redaction configuration
-    redact_paths: List[str] = Field(
-        default_factory=list,
-        description="JSON Pointer paths or glob patterns for redaction"
-    )
+    # Redaction configuration is handled through site configuration
     redaction_method: RedactionMethod = Field(
         default=RedactionMethod.HASH,
         description="Default redaction method"

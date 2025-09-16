@@ -133,43 +133,43 @@ class GA4Detector(BaseDetector, ResilientDetector):
     
     def _find_ga4_requests(self, requests: List[RequestLog]) -> List[RequestLog]:
         """Find all requests that match GA4 patterns.
-        
+
         Args:
             requests: List of network requests to analyze
-            
+
         Returns:
             List of requests that match GA4 endpoints
         """
         ga4_requests = []
-        
+
         for request in requests:
             if self._is_ga4_request(request.url):
                 ga4_requests.append(request)
-        
+
         return ga4_requests
     
     @monitor_performance("ga4_pattern_match")
     def _is_ga4_request(self, url: str) -> bool:
         """Check if URL matches any GA4 endpoint patterns using optimized matching.
-        
+
         Args:
             url: URL to check
-            
+
         Returns:
             True if URL matches GA4 patterns
         """
         # Use optimized pattern matching with caching
         ga4_patterns = [
             r"https://www\.google-analytics\.com/mp/collect",
-            r"https://region1\.google-analytics\.com/mp/collect", 
+            r"https://region1\.google-analytics\.com/mp/collect",
             r"https://.*\.google-analytics\.com/mp/collect",
             r"https://www\.google-analytics\.com/g/collect"
         ]
-        
+
         for pattern in ga4_patterns:
             if optimized_pattern_match(url, pattern):
                 return True
-        
+
         return False
     
     def _extract_events_safe(self, requests: List[RequestLog], page_url: str, 
@@ -811,11 +811,19 @@ class GA4Detector(BaseDetector, ResilientDetector):
         
         debug_config = ctx.config.get("ga4", {}).get("mp_debug", {})
         timeout = debug_config.get("timeout_ms", 5000) / 1000  # Convert to seconds
-        
+        max_requests = debug_config.get("max_validation_requests", 10)
+
         validated_count = 0
         error_count = 0
-        
+
         for request in ga4_requests:
+            # Enforce max validation requests limit
+            if validated_count >= max_requests:
+                result.add_info_note(
+                    f"MP debug validation stopped after reaching max limit of {max_requests} requests",
+                    category=NoteCategory.VALIDATION
+                )
+                break
             if not self._is_mp_request(request.url):
                 continue  # Skip non-MP requests
             
@@ -844,7 +852,10 @@ class GA4Detector(BaseDetector, ResilientDetector):
     
     def _is_mp_request(self, url: str) -> bool:
         """Check if request is a Measurement Protocol request."""
-        return bool(match_url_pattern(url, "ga4_mp_collect"))
+        return bool(
+            match_url_pattern(url, "ga4_mp_collect") or
+            match_url_pattern(url, "ga4_regional_endpoint")
+        )
     
     async def _send_debug_request(self, request: RequestLog, timeout: float) -> Dict[str, Any]:
         """Send request to GA4 MP debug endpoint.
@@ -859,9 +870,22 @@ class GA4Detector(BaseDetector, ResilientDetector):
         # Reconstruct debug URL
         debug_url = request.url.replace("/mp/collect", "/debug/mp/collect")
         
-        # Prepare request data
+        # Prepare request data with case-insensitive header lookup
+        headers_lower = {k.lower(): v for k, v in request.request_headers.items()}
+
+        # Determine content type with proper fallback for POST requests
+        content_type = headers_lower.get("content-type")
+        if not content_type and request.method == "POST":
+            # Default to form-encoded for POST requests if content type is missing
+            if request.request_body and ("&" in request.request_body and "=" in request.request_body):
+                content_type = "application/x-www-form-urlencoded"
+            else:
+                content_type = "application/json"
+        elif not content_type:
+            content_type = "application/json"
+
         headers = {
-            "Content-Type": request.request_headers.get("content-type", "application/json"),
+            "Content-Type": content_type,
             "User-Agent": "Tag-Sentinel-Debug-Validator/1.0.0"
         }
         

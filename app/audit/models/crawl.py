@@ -166,6 +166,25 @@ class CrawlConfig(BaseModel):
         default_factory=dict,
         description="Additional HTTP headers to send with requests"
     )
+
+    # Politeness and crawling etiquette
+    respect_robots: bool = Field(
+        default=True,
+        description="Whether to respect robots.txt rules"
+    )
+
+    download_delay_ms: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=60000,
+        description="Additional delay between requests in milliseconds"
+    )
+
+    # Run metadata
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata about this crawl run"
+    )
     
     @field_validator('include_patterns', 'exclude_patterns')
     @classmethod
@@ -179,51 +198,29 @@ class CrawlConfig(BaseModel):
         return v
     
     @model_validator(mode='after')
-    def validate_sitemap_url(self):
-        """Validate sitemap URL when discovery mode requires it."""
+    def validate_configuration_requirements(self):
+        """Validate cross-field requirements for discovery and load wait strategies."""
+        # Check sitemap URL requirement
         if self.discovery_mode in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID):
             if not self.sitemap_url:
                 raise ValueError("sitemap_url required for sitemap-based discovery")
-        return self
-    
-    @model_validator(mode='after')
-    def validate_seeds(self):
-        """Validate that seeds are provided when required."""
+
+        # Check seeds requirement
         if self.discovery_mode in (DiscoveryMode.SEEDS, DiscoveryMode.DOM, DiscoveryMode.HYBRID):
             if not self.seeds:
                 raise ValueError("seeds required for seed-based or DOM discovery")
-        return self
-    
-    @model_validator(mode='after')
-    def validate_load_wait_selector(self):
-        """Validate selector when using selector wait strategy."""
+
+        # Check load wait selector requirement
         if self.load_wait_strategy == LoadWaitStrategy.SELECTOR:
             if not self.load_wait_selector:
                 raise ValueError("load_wait_selector required for selector wait strategy")
-        return self
-    
-    @model_validator(mode='after')
-    def validate_load_wait_js(self):
-        """Validate JavaScript when using custom wait strategy."""
+
+        # Check load wait JavaScript requirement
         if self.load_wait_strategy == LoadWaitStrategy.CUSTOM:
             if not self.load_wait_js:
                 raise ValueError("load_wait_js required for custom wait strategy")
+
         return self
-    
-    @model_validator(mode='after')
-    def validate_discovery_requirements(cls, model):
-        """Validate that required fields are present for the selected discovery mode."""
-        # Check sitemap URL requirement
-        if model.discovery_mode in (DiscoveryMode.SITEMAP, DiscoveryMode.HYBRID):
-            if not model.sitemap_url:
-                raise ValueError("sitemap_url required for sitemap-based discovery")
-        
-        # Check seeds requirement  
-        if model.discovery_mode in (DiscoveryMode.SEEDS, DiscoveryMode.DOM, DiscoveryMode.HYBRID):
-            if not model.seeds:
-                raise ValueError("seeds required for seed-based or DOM discovery")
-        
-        return model
 
 
 class PagePlan(BaseModel):
@@ -266,6 +263,17 @@ class PagePlan(BaseModel):
         default_factory=dict,
         description="Additional metadata about this page"
     )
+
+    # Scenario-specific configuration
+    scenario_headers: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Additional HTTP headers for this specific page/scenario"
+    )
+
+    pre_steps: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Pre-processing steps to execute before page capture"
+    )
     
     # Load wait configuration (can override global config per URL)
     load_wait_strategy: Optional[LoadWaitStrategy] = Field(
@@ -287,8 +295,9 @@ class CrawlStats(BaseModel):
     # URL statistics
     urls_discovered: int = Field(default=0, description="Total URLs discovered")
     urls_queued: int = Field(default=0, description="URLs currently in queue")
-    urls_processed: int = Field(default=0, description="URLs successfully processed")
-    urls_failed: int = Field(default=0, description="URLs that failed processing")
+    urls_emitted: int = Field(default=0, description="URLs emitted to downstream processing")
+    urls_dom_processed: int = Field(default=0, description="URLs successfully processed for DOM link discovery")
+    urls_failed: int = Field(default=0, description="URLs that failed DOM processing")
     urls_skipped: int = Field(default=0, description="URLs skipped due to scope/limits")
     urls_deduplicated: int = Field(default=0, description="Duplicate URLs filtered out")
     
@@ -317,18 +326,18 @@ class CrawlStats(BaseModel):
     
     @property
     def success_rate(self) -> float:
-        """Calculate success rate as percentage."""
-        total = self.urls_processed + self.urls_failed
+        """Calculate DOM discovery success rate as percentage."""
+        total = self.urls_dom_processed + self.urls_failed
         if total == 0:
             return 0.0
-        return (self.urls_processed / total) * 100.0
+        return (self.urls_dom_processed / total) * 100.0
     
     @property
     def pages_per_second(self) -> float:
-        """Calculate processing rate in pages per second."""
+        """Calculate DOM processing rate in pages per second."""
         duration = self.duration
         if duration and duration > 0:
-            return self.urls_processed / duration
+            return self.urls_dom_processed / duration
         return 0.0
 
 
@@ -349,7 +358,7 @@ class CrawlMetrics(BaseModel):
         description="Recent error details for debugging"
     )
     
-    def add_error(self, url: str, error_type: str, error_message: str, host: str = None):
+    def add_error(self, url: str, error_type: str, error_message: str, host: Optional[str] = None):
         """Add an error to recent errors list."""
         error_info = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -372,7 +381,8 @@ class CrawlMetrics(BaseModel):
             "max_pages": self.config.max_pages,
             "max_concurrency": self.config.max_concurrency,
             "urls_discovered": self.stats.urls_discovered,
-            "urls_processed": self.stats.urls_processed,
+            "urls_emitted": self.stats.urls_emitted,
+            "urls_dom_processed": self.stats.urls_dom_processed,
             "urls_failed": self.stats.urls_failed,
             "success_rate": self.stats.success_rate,
             "duration_seconds": self.stats.duration,

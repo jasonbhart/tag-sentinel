@@ -80,6 +80,11 @@ class GTMConfig(BaseModel):
         default=True,
         description="Validate dataLayer presence and structure"
     )
+
+    expected_container_ids: List[str] = Field(
+        default_factory=list,
+        description="Expected GTM container IDs (empty list means no validation)"
+    )
     
     datalayer_extraction: Dict[str, Any] = Field(
         default_factory=lambda: {

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator, AnyHttpUrl
+from pydantic import BaseModel, Field, field_validator
 
 
 class RequestStatus(str, Enum):
@@ -248,6 +248,10 @@ class CookieRecord(BaseModel):
     value_redacted: bool = Field(
         default=False,
         description="Whether cookie value was redacted"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata about the cookie"
     )
     
     @classmethod

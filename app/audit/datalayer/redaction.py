@@ -195,8 +195,15 @@ class SensitiveDataPattern:
             # Apply validation function if provided
             if self.validation_func:
                 try:
-                    if not self.validation_func(match.group(0), context or {}):
-                        continue
+                    # Try calling with context first, fallback to just text
+                    import inspect
+                    sig = inspect.signature(self.validation_func)
+                    if len(sig.parameters) >= 2:
+                        if not self.validation_func(match.group(0), context or {}):
+                            continue
+                    else:
+                        if not self.validation_func(match.group(0)):
+                            continue
                 except Exception as e:
                     logger.debug(f"Pattern validation failed for {self.name}: {e}")
                     continue
@@ -209,7 +216,19 @@ class SensitiveDataPattern:
             matches.append(match_info)
         
         return matches
-    
+
+    def has_match(self, text: str, context: Dict[str, Any] = None) -> bool:
+        """Check if text contains any matches.
+
+        Args:
+            text: Text to search
+            context: Context information for validation
+
+        Returns:
+            True if text contains matches, False otherwise
+        """
+        return len(self.matches(text, context)) > 0
+
     def _validate_context(self, match_value: str, context: Dict[str, Any]) -> bool:
         """Validate match based on context.
         
@@ -463,7 +482,15 @@ class PatternLibrary:
                     results[pattern.name] = matches
         
         return results
-    
+
+    def get_all_patterns(self) -> List[SensitiveDataPattern]:
+        """Get all patterns in the library.
+
+        Returns:
+            List of all patterns
+        """
+        return list(self.patterns.values())
+
     @staticmethod
     def _validate_ssn(ssn: str, context: Dict[str, Any]) -> bool:
         """Validate SSN using basic checksum validation.
@@ -811,7 +838,64 @@ class Redactor:
             raise RedactionError(f"Redaction verification failed: {verification_issues}")
         
         return redacted_data, list(self.audit_trail)
-    
+
+    def redact_by_paths(
+        self,
+        data: Dict[str, Any],
+        paths: List[str],
+        method: RedactionMethod = RedactionMethod.HASH
+    ) -> Dict[str, Any]:
+        """Redact data at specific JSON paths.
+
+        Args:
+            data: Data to redact
+            paths: List of JSON paths to redact (e.g., ["/user/email", "/user/phone"])
+            method: Redaction method to apply
+
+        Returns:
+            Redacted data dictionary
+        """
+        import copy
+        redacted_data = copy.deepcopy(data)
+
+        for path in paths:
+            try:
+                # Convert JSON path to nested dictionary access
+                path_parts = [p for p in path.split('/') if p]
+
+                # Navigate to the parent of the target
+                current = redacted_data
+                for part in path_parts[:-1]:
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        # Path doesn't exist, skip
+                        break
+                else:
+                    # Apply redaction to the final key if it exists
+                    final_key = path_parts[-1]
+                    if isinstance(current, dict) and final_key in current:
+                        original_value = current[final_key]
+                        redacted_value = self._apply_redaction_method(original_value, method)
+                        current[final_key] = redacted_value
+
+                        # Add to audit trail
+                        audit_entry = RedactionAuditEntry(
+                            path=path,
+                            original_type=type(original_value).__name__,
+                            redaction_method=method,
+                            pattern_matched="path_based_redaction",
+                            confidence=1.0,
+                            context={"path": path}
+                        )
+                        self.audit_trail.append(audit_entry)
+
+            except Exception as e:
+                logger.warning(f"Failed to redact path {path}: {e}")
+                continue
+
+        return redacted_data
+
     def _apply_redaction_rule(
         self,
         data: Dict[str, Any],
@@ -892,18 +976,18 @@ class Redactor:
                     }
                     
                     # First try advanced pattern detection
-                    detections = self.advanced_detector.detect_patterns(value, context)
+                    detections = self.advanced_detector.detect_sensitive_data(value, current_path, context)
                     
                     if detections:
                         # Use the highest confidence detection
-                        best_detection = max(detections, key=lambda d: d.confidence)
+                        best_detection = max(detections, key=lambda d: d['adjusted_confidence'])
                         
-                        if best_detection.confidence >= self.config.confidence_threshold:
+                        if best_detection['adjusted_confidence'] >= self.config.confidence_threshold:
                             original_type = type(value).__name__
                             
                             # Apply pattern-specific redaction method
                             redacted_value = self._apply_redaction_method(
-                                value, best_detection.pattern.method
+                                value, best_detection['recommended_method']
                             )
                             data[key] = redacted_value
                             
@@ -911,17 +995,17 @@ class Redactor:
                             self.audit_trail.append(RedactionAuditEntry(
                                 path=key_path,
                                 original_type=original_type,
-                                method=best_detection.pattern.method,
-                                reason=f"Advanced pattern detection: {best_detection.pattern.name} "
-                                       f"(confidence: {best_detection.confidence:.2f}, "
-                                       f"category: {best_detection.pattern.category})",
-                                pattern_matched=best_detection.pattern.name
+                                method=best_detection['recommended_method'],
+                                reason=f"Advanced pattern detection: {best_detection['pattern_name']} "
+                                       f"(confidence: {best_detection['adjusted_confidence']:.2f}, "
+                                       f"category: {best_detection['pattern_category']})",
+                                pattern_matched=best_detection['pattern_name']
                             ))
                             
                             logger.debug(
                                 f"Advanced pattern redacted {key_path}: "
-                                f"{best_detection.pattern.name} "
-                                f"(confidence: {best_detection.confidence:.2f})"
+                                f"{best_detection['pattern_name']} "
+                                f"(confidence: {best_detection['adjusted_confidence']:.2f})"
                             )
                             continue
                     
@@ -1151,7 +1235,7 @@ class Redactor:
                     # Value should be hashed (completely different)
                     if redacted_value == original_value:
                         issues.append(f"HASH redaction failed at {entry.path}: value unchanged")
-                    elif not isinstance(redacted_value, str) or len(redacted_value) != 64:
+                    elif not isinstance(redacted_value, str) or not redacted_value.startswith("[HASH:") or not redacted_value.endswith("]"):
                         issues.append(f"HASH redaction failed at {entry.path}: invalid hash format")
                 
                 elif entry.method == RedactionMethod.MASK:
@@ -1377,9 +1461,14 @@ class RedactionManager:
         if site_domain in self._rule_cache:
             return self._rule_cache[site_domain]
         
-        # Load site-specific rules (placeholder for future implementation)
-        # This would load from configuration or database
-        site_rules = []
+        # Load site-specific rules from configuration
+        try:
+            from app.audit.datalayer.config import get_site_datalayer_config
+            site_config = get_site_datalayer_config(site_domain)
+            site_rules = list(site_config.redaction.rules)
+        except Exception as e:
+            logger.debug(f"Failed to load site-specific redaction rules for {site_domain}: {e}")
+            site_rules = []
         
         # Cache the rules
         self._rule_cache[site_domain] = site_rules

@@ -80,14 +80,25 @@ class Crawler:
         # State tracking
         self._metrics = CrawlMetrics(config=config)
         self._running = False
-        self._workers: List[asyncio.Task] = []
         self._discovery_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
-        
-        # Processed URLs tracking
+
+        # URL tracking for emission and DOM discovery
         self._processed_urls: Set[str] = set()
         self._processing_urls: Set[str] = set()
+        self._emitted_urls: Set[str] = set()
+        self._urls_emitted = 0
         self._lock = asyncio.Lock()
+
+        # DOM discovery task pool
+        self._dom_semaphore = asyncio.Semaphore(min(config.max_concurrency, 5))
+        self._dom_tasks: Set[asyncio.Task] = set()
+
+        # Robots.txt cache
+        self._robots_cache: Dict[str, Dict[str, bool]] = {}
+
+        # Failed URLs (for potential retry)
+        self._failed_urls: Set[str] = set()
     
     def _create_input_providers(self) -> Dict[str, Any]:
         """Create input providers based on discovery mode."""
@@ -123,6 +134,69 @@ class Crawler:
                 providers['dom'] = MockDomLinkProvider()
         
         return providers
+
+    async def _is_allowed_by_robots(self, url: str) -> bool:
+        """Check if URL is allowed by robots.txt."""
+        if not self.config.respect_robots:
+            return True
+
+        try:
+            from urllib.parse import urlparse, urljoin
+            parsed = urlparse(url)
+            host = parsed.netloc.lower()
+
+            # Check cache first
+            if host in self._robots_cache:
+                path = parsed.path or '/'
+                # Simple robots.txt check - look for exact path or wildcard rules
+                robots_rules = self._robots_cache[host]
+                if path in robots_rules:
+                    return robots_rules[path]
+                # Check for wildcard match (simple implementation)
+                for rule_path, allowed in robots_rules.items():
+                    if rule_path.endswith('*') and path.startswith(rule_path[:-1]):
+                        return allowed
+                return True  # Default allow if no specific rule
+
+            # Fetch robots.txt (simple implementation)
+            robots_url = urljoin(f"{parsed.scheme}://{parsed.netloc}", "/robots.txt")
+            self._robots_cache[host] = {}  # Initialize cache for this host
+
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                    async with session.get(robots_url) as response:
+                        if response.status == 200:
+                            robots_text = await response.text()
+                            # Parse robots.txt for User-agent: * rules
+                            lines = robots_text.split('\n')
+                            in_user_agent_section = False
+                            for line in lines:
+                                line = line.strip()
+                                if line.lower().startswith('user-agent:'):
+                                    in_user_agent_section = '*' in line or 'user-agent: *' in line.lower()
+                                elif in_user_agent_section and line.lower().startswith('disallow:'):
+                                    disallowed_path = line.split(':', 1)[1].strip()
+                                    if disallowed_path:
+                                        self._robots_cache[host][disallowed_path] = False
+            except Exception:
+                # If robots.txt fetch fails, default to allowing
+                pass
+
+            # Check again with populated cache
+            path = parsed.path or '/'
+            robots_rules = self._robots_cache[host]
+            if path in robots_rules:
+                return robots_rules[path]
+            # Check for wildcard match
+            for rule_path, allowed in robots_rules.items():
+                if rule_path.endswith('*') and path.startswith(rule_path[:-1]):
+                    return allowed
+            return True  # Default allow
+
+        except Exception as e:
+            logger.debug(f"Robots.txt check failed for {url}: {e}")
+            return True  # Default to allow on error
     
     async def crawl(self) -> AsyncIterator[PagePlan]:
         """Execute the crawl and yield discovered PagePlans.
@@ -143,11 +217,8 @@ class Crawler:
             async with self._crawler_context():
                 # Start URL discovery
                 self._discovery_task = asyncio.create_task(self._discover_urls())
-                
-                # Start worker pool
-                await self._start_workers()
-                
-                # Yield PagePlans as they become available
+
+                # Yield PagePlans as they become available and trigger DOM discovery
                 async for page_plan in self._process_queue():
                     if self._should_stop():
                         break
@@ -228,8 +299,14 @@ class Crawler:
             logger.debug(f"URL out of scope: {page_plan.url}")
             return
 
+        # Check robots.txt
+        if not await self._is_allowed_by_robots(str(page_plan.url)):
+            self._metrics.stats.urls_skipped += 1
+            logger.debug(f"URL disallowed by robots.txt: {page_plan.url}")
+            return
+
         # Check limits
-        if self._metrics.stats.urls_processed >= self.config.max_pages:
+        if self._urls_emitted >= self.config.max_pages:
             logger.info(f"Reached max pages limit: {self.config.max_pages}")
             return
 
@@ -242,100 +319,112 @@ class Crawler:
         else:
             self._metrics.stats.urls_skipped += 1
     
-    async def _start_workers(self):
-        """Start the worker pool for processing pages."""
-        worker_count = min(self.config.max_concurrency, self.config.max_pages)
-        
-        for i in range(worker_count):
-            worker = asyncio.create_task(self._worker_loop(f"worker-{i}"))
-            self._workers.append(worker)
-        
-        logger.info(f"Started {worker_count} workers")
-    
-    async def _worker_loop(self, worker_name: str):
-        """Main loop for a crawler worker.
-        
+    async def _schedule_dom_discovery(self, page_plan: PagePlan):
+        """Schedule DOM discovery for a page without blocking emission.
+
         Args:
-            worker_name: Name of this worker for logging
+            page_plan: PagePlan to discover links from
         """
-        logger.debug(f"Worker {worker_name} started")
-        
-        while not self._shutdown_event.is_set():
-            try:
-                # Get next page from queue
-                page_plan = await self.frontier_queue.get(timeout=1.0)
-                if page_plan is None:
-                    continue
-                
-                # Process the page
-                await self._process_page(page_plan, worker_name)
-                
-            except QueueClosedError:
-                logger.debug(f"Worker {worker_name} stopping - queue closed")
-                break
-            except Exception as e:
-                logger.error(f"Worker {worker_name} error: {e}")
-        
-        logger.debug(f"Worker {worker_name} stopped")
+        if (self.config.discovery_mode not in (DiscoveryMode.DOM, DiscoveryMode.HYBRID)
+            or 'dom' not in self._input_providers):
+            return
+
+        # Create DOM discovery task
+        task = asyncio.create_task(self._discover_dom_links(page_plan))
+        self._dom_tasks.add(task)
+
+        # Clean up completed tasks
+        task.add_done_callback(lambda t: self._dom_tasks.discard(t))
     
-    async def _process_page(self, page_plan: PagePlan, worker_name: str):
-        """Process a single page for DOM link discovery.
-        
+    async def _discover_dom_links(self, page_plan: PagePlan):
+        """Discover DOM links from a page using rate limiting and concurrency control.
+
         Args:
-            page_plan: PagePlan to process
-            worker_name: Name of processing worker
+            page_plan: PagePlan to discover links from
         """
         url = str(page_plan.url)
-        
-        # Check if already processing or processed
+
+        # Check if already processing, processed, or permanently failed
         async with self._lock:
-            if url in self._processing_urls or url in self._processed_urls:
+            if url in self._processing_urls or url in self._processed_urls or url in self._failed_urls:
                 return
             self._processing_urls.add(url)
-        
-        try:
-            # Rate limiting
-            limiter = await self.rate_limiter.acquire(url, timeout=30.0)
-            if not limiter:
-                logger.warning(f"Rate limit timeout for {url}")
-                self._metrics.add_error(url, "rate_limit", "Timeout waiting for rate limit")
-                return
-            
+
+        # Use semaphore to limit concurrent DOM discovery
+        async with self._dom_semaphore:
             try:
-                # DOM link discovery (if enabled)
-                if (self.config.discovery_mode in (DiscoveryMode.DOM, DiscoveryMode.HYBRID)
-                    and 'dom' in self._input_providers):
-                    
+                # Rate limiting
+                limiter = await self.rate_limiter.acquire(url, timeout=30.0)
+                if not limiter:
+                    logger.warning(f"Rate limit timeout for DOM discovery: {url}")
+                    self._metrics.add_error(url, "rate_limit", "Timeout waiting for rate limit")
+                    # Don't mark as processed - allow retry later
+                    async with self._lock:
+                        self._processing_urls.discard(url)
+                    return
+
+                try:
+                    # Apply download delay if configured
+                    if self.config.download_delay_ms:
+                        await asyncio.sleep(self.config.download_delay_ms / 1000.0)
+
                     dom_provider = self._input_providers['dom']
                     new_depth = page_plan.depth + 1
-                    
+
                     # Check depth limit
                     if self.config.max_depth is None or new_depth <= self.config.max_depth:
                         async for discovered_plan in dom_provider.discover_urls_from_page(
                             url, new_depth, self._processed_urls
                         ):
                             await self._enqueue_page_plan(discovered_plan, QueuePriority.LOW)
-                
-                # Record success
-                await self.rate_limiter.record_response(url, 200)
-                self._metrics.stats.urls_processed += 1
-                
-            finally:
-                await limiter.release()
-                
-        except Exception as e:
-            logger.error(f"Error processing page {url}: {e}")
-            self._metrics.add_error(url, "processing_error", str(e))
-            self._metrics.stats.urls_failed += 1
 
-            # Record error with rate limiter for backoff calculations
-            error_type = self._classify_error(e)
-            await self.rate_limiter.record_error(url, error_type)
-        finally:
-            # Mark as processed
-            async with self._lock:
-                self._processing_urls.discard(url)
-                self._processed_urls.add(url)
+                    # Record success and mark as processed
+                    await self.rate_limiter.record_response(url, 200)
+                    self._metrics.stats.urls_dom_processed += 1
+
+                    async with self._lock:
+                        self._processing_urls.discard(url)
+                        self._processed_urls.add(url)
+
+                finally:
+                    await limiter.release()
+
+            except Exception as e:
+                logger.error(f"Error in DOM discovery for {url}: {e}")
+                self._metrics.add_error(url, "dom_discovery_error", str(e))
+                self._metrics.stats.urls_failed += 1
+
+                # Record error with rate limiter for backoff calculations
+                error_type = self._classify_error(e)
+                await self.rate_limiter.record_error(url, error_type)
+
+                # Classify error type for retry decision
+                async with self._lock:
+                    self._processing_urls.discard(url)
+                    if self._is_permanent_error(e):
+                        # Permanent error - don't retry
+                        self._failed_urls.add(url)
+                    # Transient error - allow retry by not marking as processed or failed
+    
+
+    def _is_permanent_error(self, error: Exception) -> bool:
+        """Determine if an error is permanent and should not be retried."""
+        error_str = str(error).lower()
+
+        # Permanent HTTP errors
+        if any(code in error_str for code in ['404', '403', '401', '400']):
+            return True
+
+        # DNS resolution errors
+        if any(term in error_str for term in ['dns', 'resolve', 'name resolution']):
+            return True
+
+        # Invalid URL errors
+        if 'invalid url' in error_str or 'malformed url' in error_str:
+            return True
+
+        # Otherwise consider it transient
+        return False
 
     def _classify_error(self, error: Exception) -> str:
         """Classify an error for rate limiter backoff calculations.
@@ -365,7 +454,7 @@ class Crawler:
     
     async def _process_queue(self) -> AsyncIterator[PagePlan]:
         """Process the frontier queue and yield PagePlans for browser capture.
-        
+
         Yields:
             PagePlan objects ready for browser processing
         """
@@ -374,17 +463,30 @@ class Crawler:
                 page_plan = await self.frontier_queue.get(timeout=1.0)
                 if page_plan is None:
                     # Check if discovery is complete and queue is empty
-                    if (self._discovery_task and self._discovery_task.done() 
+                    if (self._discovery_task and self._discovery_task.done()
                         and self.frontier_queue.empty()):
                         break
                     continue
-                
+
+                url = str(page_plan.url)
+
+                # Check if already emitted (prevent duplicates)
+                async with self._lock:
+                    if url in self._emitted_urls:
+                        continue
+                    self._emitted_urls.add(url)
+                    self._urls_emitted += 1
+                    self._metrics.stats.urls_emitted += 1
+
                 # Update metrics
-                self._metrics.current_url = str(page_plan.url)
+                self._metrics.current_url = url
                 self._metrics.queue_size = self.frontier_queue.qsize()
-                
+
+                # Schedule DOM discovery for this page (non-blocking)
+                await self._schedule_dom_discovery(page_plan)
+
                 yield page_plan
-                
+
             except QueueClosedError:
                 break
             except Exception as e:
@@ -392,57 +494,58 @@ class Crawler:
     
     def _should_stop(self) -> bool:
         """Check if crawler should stop based on limits and conditions."""
-        # Check page limit
-        if self._metrics.stats.urls_processed >= self.config.max_pages:
+        # Check page limit (based on emitted pages, not processed)
+        if self._urls_emitted >= self.config.max_pages:
             return True
-        
+
         # Check shutdown signal
         if self._shutdown_event.is_set():
             return True
-        
+
         # Check if discovery is done and queue is empty
-        if (self._discovery_task and self._discovery_task.done() 
-            and self.frontier_queue.empty() 
+        if (self._discovery_task and self._discovery_task.done()
+            and self.frontier_queue.empty()
             and not self._processing_urls):
             return True
-        
+
         return False
     
     async def stop(self):
         """Gracefully stop the crawler."""
         logger.info("Stopping crawler...")
         self._shutdown_event.set()
-        
+
         # Cancel discovery task
         if self._discovery_task and not self._discovery_task.done():
             self._discovery_task.cancel()
-        
+
         # Close queue
         await self.frontier_queue.close()
-        
-        # Wait for workers to finish
-        if self._workers:
-            await asyncio.gather(*self._workers, return_exceptions=True)
-        
+
+        # Wait for DOM discovery tasks to finish
+        if self._dom_tasks:
+            await asyncio.gather(*self._dom_tasks, return_exceptions=True)
+
         await self._cleanup()
     
     async def _cleanup(self):
         """Cleanup crawler resources."""
         # Stop rate limiter
         await self.rate_limiter.close()
-        
+
         # Cancel any remaining tasks
         if self._discovery_task and not self._discovery_task.done():
             self._discovery_task.cancel()
-        
-        for worker in self._workers:
-            if not worker.done():
-                worker.cancel()
-        
-        if self._workers:
-            await asyncio.gather(*self._workers, return_exceptions=True)
-        
-        self._workers.clear()
+
+        # Cancel remaining DOM discovery tasks
+        for task in self._dom_tasks:
+            if not task.done():
+                task.cancel()
+
+        if self._dom_tasks:
+            await asyncio.gather(*self._dom_tasks, return_exceptions=True)
+
+        self._dom_tasks.clear()
         logger.info("Crawler cleanup completed")
     
     def get_metrics(self) -> CrawlMetrics:
