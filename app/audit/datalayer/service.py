@@ -227,10 +227,10 @@ class DataLayerService:
         
         try:
             # Step 1: Capture dataLayer snapshot with graceful degradation
-            async with graceful_degradation(
-                "capture_snapshot",
-                ComponentType.CAPTURE,
-                fallback_result=DataLayerSnapshot(page_url=page_url, exists=False, object_name=context.data_layer_object),
+            with graceful_degradation(
+                fallback_value=DataLayerSnapshot(page_url=page_url, exists=False, object_name=context.data_layer_object),
+                operation_name="capture_snapshot",
+                component=ComponentType.CAPTURE,
                 error_handler=self.error_handler
             ) as snapshot:
                 snapshot = await self._capture_snapshot(page, context, page_url)
@@ -244,20 +244,20 @@ class DataLayerService:
                 
                 # Step 2: Apply redaction if enabled with graceful degradation
                 if site_config.redaction.enabled and (result.snapshot.latest or result.snapshot.events):
-                    async with graceful_degradation(
-                        "apply_redaction",
-                        ComponentType.REDACTION,
-                        fallback_result=None,
+                    with graceful_degradation(
+                        fallback_value=None,
+                        operation_name="apply_redaction",
+                        component=ComponentType.REDACTION,
                         error_handler=self.error_handler
                     ):
                         await self._apply_redaction(result, site_domain)
                 
                 # Step 3: Perform schema validation if enabled with graceful degradation
                 if site_config.validation.enabled and context.schema_path:
-                    async with graceful_degradation(
-                        "perform_validation",
-                        ComponentType.VALIDATION,
-                        fallback_result=None,
+                    with graceful_degradation(
+                        fallback_value=None,
+                        operation_name="perform_validation",
+                        component=ComponentType.VALIDATION,
                         error_handler=self.error_handler
                     ):
                         await self._perform_validation(result, context.schema_path, page_url)

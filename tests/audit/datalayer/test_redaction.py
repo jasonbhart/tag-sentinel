@@ -437,7 +437,7 @@ class TestAdvancedPatternDetector:
         assert len(detections) >= 2
         
         pattern_names = [d.pattern_name for d in detections]
-        assert "email" in pattern_names
+        assert "email_address" in pattern_names
         assert any("phone" in name for name in pattern_names)
     
     def test_detect_in_json_structure(self):
@@ -474,8 +474,8 @@ class TestAdvancedPatternDetector:
         detections_random = self.detector.detect_sensitive_data(email_in_random_text)
         
         # Find email detections
-        email_contact = next((d for d in detections_contact if d.pattern_name == "email"), None)
-        email_random = next((d for d in detections_random if d.pattern_name == "email"), None)
+        email_contact = next((d for d in detections_contact if d.pattern_name == "email_address"), None)
+        email_random = next((d for d in detections_random if d.pattern_name == "email_address"), None)
         
         # Context-aware scoring might give different confidences
         if email_contact and email_random:
@@ -550,7 +550,7 @@ class TestAdvancedPatternDetector:
         
         # Should have at least the real email
         assert len(real_detections) >= 1
-        assert any(d.pattern_name == "email" for d in real_detections)
+        assert any(d.pattern_name == "email_address" for d in real_detections)
     
     def test_custom_pattern_integration(self):
         """Test integration with custom patterns."""

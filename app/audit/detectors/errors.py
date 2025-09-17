@@ -4,6 +4,7 @@ Provides comprehensive error handling, logging, and graceful degradation
 for detector components to ensure system resilience.
 """
 
+import json
 import logging
 import traceback
 from contextlib import contextmanager

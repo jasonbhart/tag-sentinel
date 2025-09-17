@@ -692,7 +692,12 @@ async def run_detector_pipeline(detectors: List[BaseDetector],
         if hasattr(detector, 'detect_async'):
             result = await detector.detect_async(page, context)
         else:
-            result = detector.detect(page, context)
+            detect_result = detector.detect(page, context)
+            # If detect returns a coroutine, await it
+            if hasattr(detect_result, '__await__'):
+                result = await detect_result
+            else:
+                result = detect_result
 
         results[detector.name] = result
 

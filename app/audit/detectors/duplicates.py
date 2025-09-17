@@ -233,7 +233,7 @@ class DuplicateAnalyzer(BaseDetector):
     
     def __init__(self, name: str = "DuplicateAnalyzer"):
         super().__init__(name, "1.0.0")
-        self.canonicalizer = None  # Will be initialized with config
+        self.canonicalizer: Optional[EventCanonicalizer] = None  # Will be initialized with config
     
     @property
     def supported_vendors(self) -> Set[Vendor]:
@@ -259,8 +259,7 @@ class DuplicateAnalyzer(BaseDetector):
         
         try:
             # Initialize canonicalizer with context configuration
-            duplicate_config = ctx.config.get("duplicates", {})
-            self.canonicalizer = EventCanonicalizer(duplicate_config)
+            self.canonicalizer = EventCanonicalizer(ctx.config)
             
             # Get events from context (set by previous detectors)
             events = self._get_events_from_context(ctx)
@@ -273,7 +272,7 @@ class DuplicateAnalyzer(BaseDetector):
                 return result
             
             # Analyze duplicates with time window
-            time_window_ms = duplicate_config.get("window_ms", 4000)
+            time_window_ms = ctx.config.get("window_ms", 4000)
             duplicate_groups = self._analyze_duplicates(events, time_window_ms)
             
             # Generate analysis notes
@@ -326,6 +325,8 @@ class DuplicateAnalyzer(BaseDetector):
         groups_by_hash: Dict[str, DuplicateGroup] = {}
         
         for event in sorted_events:
+            if self.canonicalizer is None:
+                raise RuntimeError("Canonicalizer not initialized")
             event_hash = self.canonicalizer.get_event_hash(event)
             
             # Check if we have an existing group for this hash within time window

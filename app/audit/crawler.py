@@ -91,7 +91,7 @@ class Crawler:
         self._lock = asyncio.Lock()
 
         # DOM discovery task pool
-        self._dom_semaphore = asyncio.Semaphore(min(config.max_concurrency, 5))
+        self._dom_semaphore = asyncio.Semaphore(config.max_concurrency)
         self._dom_tasks: Set[asyncio.Task] = set()
 
         # Robots.txt cache
@@ -443,11 +443,14 @@ class Crawler:
             return 'timeout'
         elif any(term in error_str for term in ['connection', 'network', 'dns', 'resolve']):
             return 'network'
-        elif 'http' in error_str and any(code in error_str for code in ['500', '502', '503', '504']):
+        # Check for specific HTTP status codes in error messages
+        elif any(code in error_str for code in ['500', '502', '503', '504']) or \
+             ('http' in error_str and any(code in error_str for code in ['500', '502', '503', '504'])):
             return 'server_error'
-        elif 'http' in error_str and any(code in error_str for code in ['429']):
+        elif '429' in error_str or ('http' in error_str and '429' in error_str):
             return 'rate_limited'
-        elif 'http' in error_str and any(code in error_str for code in ['404', '403', '401']):
+        elif any(code in error_str for code in ['404', '403', '401']) or \
+             ('http' in error_str and any(code in error_str for code in ['404', '403', '401'])):
             return 'client_error'
         else:
             return 'unknown'

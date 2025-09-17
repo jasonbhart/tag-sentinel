@@ -15,6 +15,53 @@ class URLNormalizationError(Exception):
     pass
 
 
+def _extract_etld_plus_one(hostname: str) -> str:
+    """Extract the eTLD+1 (effective top-level domain + 1) from a hostname.
+
+    This is a simplified implementation that handles common multi-part TLDs.
+    For production use, consider using the publicsuffix2 library.
+
+    Args:
+        hostname: The hostname to extract eTLD+1 from
+
+    Returns:
+        The eTLD+1 portion of the hostname
+
+    Examples:
+        >>> _extract_etld_plus_one("subdomain.example.com")
+        "example.com"
+        >>> _extract_etld_plus_one("foo.co.uk")
+        "foo.co.uk"
+        >>> _extract_etld_plus_one("bar.example.co.uk")
+        "example.co.uk"
+    """
+    # Common multi-part TLDs that need special handling
+    multi_part_tlds = {
+        'co.uk', 'co.jp', 'co.kr', 'co.za', 'co.nz', 'co.in', 'co.il',
+        'com.au', 'com.br', 'com.cn', 'com.mx', 'com.tr', 'com.tw',
+        'net.au', 'net.br', 'net.in', 'net.mx', 'net.nz', 'net.za',
+        'org.au', 'org.br', 'org.in', 'org.mx', 'org.nz', 'org.za',
+        'edu.au', 'edu.br', 'edu.in', 'edu.mx', 'gov.au', 'gov.br',
+        'ac.uk', 'org.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'net.uk'
+    }
+
+    parts = hostname.split('.')
+    if len(parts) < 2:
+        return hostname
+
+    # Check for multi-part TLD matches
+    for tld_parts in [3, 2]:  # Check 3-part first, then 2-part
+        if len(parts) >= tld_parts + 1:
+            potential_tld = '.'.join(parts[-tld_parts:])
+            if potential_tld in multi_part_tlds:
+                if len(parts) == tld_parts:
+                    return hostname  # Just the TLD itself
+                return '.'.join(parts[-(tld_parts + 1):])
+
+    # Default to simple 2-part extraction for single TLDs
+    return '.'.join(parts[-2:])
+
+
 def normalize(url: str) -> str:
     """Normalize a URL for consistent deduplication and comparison.
     
@@ -149,6 +196,11 @@ def normalize(url: str) -> str:
             except (UnicodeDecodeError, UnicodeEncodeError):
                 # Keep original path if encoding fails
                 pass
+
+            # Only normalize trailing slash for root path to avoid breaking REST endpoints
+            # and file URLs that intentionally omit trailing slashes
+            if path == '' or path == '/':
+                path = '/'
         
         # Keep query string as-is (parameter normalization could break functionality)
         query = parsed.query
@@ -208,8 +260,11 @@ def are_same_site(url1: str, url2: str) -> bool:
         if len(parts1) < 2 or len(parts2) < 2:
             return host1 == host2
         
-        # Compare last two parts (simplified eTLD+1)
-        return parts1[-2:] == parts2[-2:]
+        # Extract eTLD+1 (effective top-level domain + 1)
+        etld1 = _extract_etld_plus_one(host1)
+        etld2 = _extract_etld_plus_one(host2)
+
+        return etld1 == etld2
         
     except (URLNormalizationError, Exception):
         return False

@@ -137,10 +137,17 @@ class DomLinkProvider:
             
             # Navigate to the page
             logger.debug(f"Navigating to page: {source_url}")
-            await page.goto(source_url, wait_until="domcontentloaded")
-            
+            response = await page.goto(source_url, wait_until="domcontentloaded")
+
+            # Check response status
+            if response and response.status >= 400:
+                error_msg = f"HTTP {response.status} for {source_url}"
+                logger.error(error_msg)
+                raise DomProviderError(error_msg)
+
             # Wait for load condition and capture timing
             load_state_info = await self._wait_for_load_condition(page, source_url)
+            load_state_info['response_status'] = response.status if response else None
 
             # Extract links from the page
             links = await self._extract_links_from_page(page, source_url)

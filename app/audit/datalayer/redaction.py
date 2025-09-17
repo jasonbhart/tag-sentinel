@@ -27,6 +27,39 @@ class RedactionError(Exception):
     pass
 
 
+class DetectionResult:
+    """Result of a sensitive data detection."""
+
+    def __init__(
+        self,
+        path: str,
+        pattern_name: str,
+        pattern_category: str,
+        original_confidence: float,
+        adjusted_confidence: float,
+        match_value: str,
+        match_start: int,
+        match_end: int,
+        severity: str,
+        recommended_method: RedactionMethod,
+        description: str,
+        context: Dict[str, Any]
+    ):
+        self.path = path
+        self.pattern_name = pattern_name
+        self.pattern_category = pattern_category
+        self.original_confidence = original_confidence
+        self.confidence = adjusted_confidence  # Alias for backward compatibility
+        self.adjusted_confidence = adjusted_confidence
+        self.match_value = match_value
+        self.match_start = match_start
+        self.match_end = match_end
+        self.severity = severity
+        self.recommended_method = recommended_method
+        self.description = description
+        self.context = context
+
+
 class RedactionAuditEntry:
     """Audit trail entry for redacted data."""
     
@@ -302,7 +335,7 @@ class PatternLibrary:
         financial_patterns = [
             SensitiveDataPattern(
                 name="credit_card",
-                pattern=r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',
+                pattern=r'\b(?:4[0-9]{3}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}|5[1-5][0-9]{2}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}|3[47][0-9]{2}[- ]?[0-9]{6}[- ]?[0-9]{5}|3[0-9]{3}[- ]?[0-9]{6}[- ]?[0-9]{4}|6(?:011|5[0-9]{2})[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4})\b',
                 method=RedactionMethod.REMOVE,
                 confidence=0.95,
                 description="Credit card numbers",
@@ -414,18 +447,22 @@ class PatternLibrary:
         for pattern in all_patterns:
             self.add_pattern(pattern)
     
-    def add_pattern(self, pattern: SensitiveDataPattern) -> None:
+    def add_pattern(self, pattern: SensitiveDataPattern, override: bool = False) -> None:
         """Add a pattern to the library.
-        
+
         Args:
             pattern: Pattern to add
+            override: Whether to override existing patterns with the same name
         """
+        if pattern.name in self.patterns and not override:
+            raise ValueError(f"Pattern '{pattern.name}' already exists. Use override=True to replace it.")
+
         self.patterns[pattern.name] = pattern
-        
+
         # Update categories
         if pattern.category not in self.categories:
             self.categories[pattern.category] = []
-        
+
         if pattern.name not in self.categories[pattern.category]:
             self.categories[pattern.category].append(pattern.name)
     
@@ -490,6 +527,26 @@ class PatternLibrary:
             List of all patterns
         """
         return list(self.patterns.values())
+
+    def get_patterns_by_name(self, name: str) -> List[SensitiveDataPattern]:
+        """Get patterns by name (supports partial matching).
+
+        Args:
+            name: Pattern name or partial name to search for
+
+        Returns:
+            List of patterns matching the name
+        """
+        if name in self.patterns:
+            return [self.patterns[name]]
+
+        # Partial matching for names containing the search term
+        matching_patterns = []
+        for pattern_name, pattern in self.patterns.items():
+            if name.lower() in pattern_name.lower():
+                matching_patterns.append(pattern)
+
+        return matching_patterns
 
     @staticmethod
     def _validate_ssn(ssn: str, context: Dict[str, Any]) -> bool:
@@ -571,7 +628,7 @@ class AdvancedPatternDetector:
         context: Dict[str, Any] = None,
         categories: List[str] = None,
         min_confidence: float = 0.7
-    ) -> List[Dict[str, Any]]:
+    ) -> List[DetectionResult]:
         """Detect sensitive data with advanced analysis.
         
         Args:
@@ -615,7 +672,7 @@ class AdvancedPatternDetector:
         context: Dict[str, Any],
         categories: List[str],
         min_confidence: float
-    ) -> List[Dict[str, Any]]:
+    ) -> List[DetectionResult]:
         """Analyze string for sensitive patterns.
         
         Args:
@@ -643,20 +700,20 @@ class AdvancedPatternDetector:
             
             if adjusted_confidence >= min_confidence:
                 for match in pattern_matches:
-                    detection = {
-                        'path': path,
-                        'pattern_name': pattern_name,
-                        'pattern_category': pattern.category,
-                        'original_confidence': match['confidence'],
-                        'adjusted_confidence': adjusted_confidence,
-                        'match_value': match['value'],
-                        'match_start': match['start'],
-                        'match_end': match['end'],
-                        'severity': pattern.severity,
-                        'recommended_method': pattern.method,
-                        'description': pattern.description,
-                        'context': context.copy()
-                    }
+                    detection = DetectionResult(
+                        path=path,
+                        pattern_name=pattern_name,
+                        pattern_category=pattern.category,
+                        original_confidence=match['confidence'],
+                        adjusted_confidence=adjusted_confidence,
+                        match_value=match['value'],
+                        match_start=match['start'],
+                        match_end=match['end'],
+                        severity=pattern.severity,
+                        recommended_method=pattern.method,
+                        description=pattern.description,
+                        context=context.copy()
+                    )
                     detections.append(detection)
                     
                     # Update statistics
@@ -741,11 +798,101 @@ class AdvancedPatternDetector:
     
     def mark_false_positive(self, pattern_name: str) -> None:
         """Mark a pattern as prone to false positives.
-        
+
         Args:
             pattern_name: Name of pattern to mark
         """
         self.false_positive_patterns.add(pattern_name)
+
+    def detect_in_structure(self, data: Any, path: str = "") -> List[Any]:
+        """Detect sensitive data in nested data structures.
+
+        Args:
+            data: Data structure to analyze (dict, list, or primitive)
+            path: Current JSON path
+
+        Returns:
+            List of detection objects with json_path attributes
+        """
+        detections = []
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                key_path = f"{path}/{key}"
+
+                if isinstance(value, str):
+                    # Analyze string values for patterns
+                    context = {
+                        'parent_key': key,
+                        'sibling_keys': list(data.keys()),
+                        'path': key_path
+                    }
+
+                    string_detections = self._analyze_string(value, key_path, context, None, 0.0)
+
+                    # Convert to detection objects with json_path
+                    for detection in string_detections:
+                        # Create a simple object with attributes instead of dict
+                        detection_obj = type('Detection', (), {
+                            'json_path': key_path,
+                            'pattern_name': detection.pattern_name,
+                            'pattern_category': detection.pattern_category,
+                            'confidence': detection.adjusted_confidence,
+                            'value': detection.match_value,
+                            'severity': detection.severity,
+                            'description': detection.description
+                        })()
+                        detections.append(detection_obj)
+
+                elif isinstance(value, (dict, list)):
+                    # Recursively analyze nested structures
+                    nested_detections = self.detect_in_structure(value, key_path)
+                    detections.extend(nested_detections)
+
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                item_path = f"{path}[{i}]"
+
+                if isinstance(item, str):
+                    # Analyze string values for patterns
+                    string_detections = self._analyze_string(item, item_path, {}, None, 0.0)
+
+                    # Convert to detection objects with json_path
+                    for detection in string_detections:
+                        detection_obj = type('Detection', (), {
+                            'json_path': item_path,
+                            'pattern_name': detection.pattern_name,
+                            'pattern_category': detection.pattern_category,
+                            'confidence': detection.adjusted_confidence,
+                            'value': detection.match_value,
+                            'severity': detection.severity,
+                            'description': detection.description
+                        })()
+                        detections.append(detection_obj)
+
+                elif isinstance(item, (dict, list)):
+                    # Recursively analyze nested structures
+                    nested_detections = self.detect_in_structure(item, item_path)
+                    detections.extend(nested_detections)
+
+        elif isinstance(data, str):
+            # Direct string analysis
+            string_detections = self._analyze_string(data, path, {}, None, 0.0)
+
+            # Convert to detection objects with json_path
+            for detection in string_detections:
+                detection_obj = type('Detection', (), {
+                    'json_path': path,
+                    'pattern_name': detection.pattern_name,
+                    'pattern_category': detection.pattern_category,
+                    'confidence': detection.adjusted_confidence,
+                    'value': detection.match_value,
+                    'severity': detection.severity,
+                    'description': detection.description
+                })()
+                detections.append(detection_obj)
+
+        return detections
 
 
 class Redactor:

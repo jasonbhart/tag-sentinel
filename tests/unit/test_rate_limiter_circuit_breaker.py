@@ -4,8 +4,9 @@ import pytest
 import asyncio
 import time
 from unittest.mock import patch
+import pytest_asyncio
 
-from app.audit.queue.rate_limiter import HostRateLimiter, BackoffReason
+from app.audit.queue.rate_limiter import HostRateLimiter, BackoffReason, PerHostRateLimiter
 
 
 class TestRateLimiterCircuitBreaker:
@@ -194,6 +195,80 @@ class TestRateLimiterCircuitBreaker:
         # Should have logged circuit breaker opening
         assert any("Circuit breaker opened" in record.message for record in caplog.records)
         assert any("consecutive failures" in record.message for record in caplog.records)
+
+
+class TestRateLimiterErrorHandling:
+    """Test cases for rate limiter error handling improvements."""
+
+    @pytest_asyncio.fixture
+    async def rate_limiter_service(self):
+        """Create a rate limiter service for testing."""
+        service = PerHostRateLimiter()
+        yield service
+
+    @pytest.mark.asyncio
+    async def test_record_error_handles_rate_limited(self, rate_limiter_service):
+        """Test that 'rate_limited' error type triggers backoff."""
+        url = "https://test.example.com/page"
+
+        # Record a rate limited error
+        await rate_limiter_service.record_error(url, "rate_limited")
+
+        # Get the limiter and check if backoff was applied
+        limiter = await rate_limiter_service.get_limiter(url)
+        stats = limiter.get_stats()
+
+        # Should have recorded a failure for rate limiting
+        assert stats['backoff_failures'] > 0
+        assert stats['backoff_reason'] == 'rate_limit'
+
+    @pytest.mark.asyncio
+    async def test_record_error_handles_server_error(self, rate_limiter_service):
+        """Test that 'server_error' error type triggers backoff."""
+        url = "https://test.example.com/page"
+
+        # Record a server error
+        await rate_limiter_service.record_error(url, "server_error")
+
+        # Get the limiter and check if backoff was applied
+        limiter = await rate_limiter_service.get_limiter(url)
+        stats = limiter.get_stats()
+
+        # Should have recorded a failure for server errors
+        assert stats['backoff_failures'] > 0
+        assert stats['backoff_reason'] == 'server_error'
+
+    @pytest.mark.asyncio
+    async def test_record_error_handles_multiple_error_types(self, rate_limiter_service):
+        """Test that all error types are properly handled."""
+        url = "https://test.example.com/page"
+
+        error_types = ["timeout", "connection", "network", "rate_limited", "server_error"]
+
+        for error_type in error_types:
+            await rate_limiter_service.record_error(url, error_type)
+
+        # Get the limiter and check if all failures were recorded
+        limiter = await rate_limiter_service.get_limiter(url)
+        stats = limiter.get_stats()
+
+        # Should have recorded all failures
+        assert stats['backoff_failures'] == len(error_types)
+
+    @pytest.mark.asyncio
+    async def test_record_error_unknown_type_is_ignored(self, rate_limiter_service):
+        """Test that unknown error types don't trigger backoff."""
+        url = "https://test.example.com/page"
+
+        # Record an unknown error type
+        await rate_limiter_service.record_error(url, "unknown_error")
+
+        # Get the limiter and check that no backoff was applied
+        limiter = await rate_limiter_service.get_limiter(url)
+        stats = limiter.get_stats()
+
+        # Should not have recorded any failures for unknown error types
+        assert stats['backoff_failures'] == 0
 
 
 if __name__ == "__main__":

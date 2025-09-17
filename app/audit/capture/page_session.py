@@ -215,9 +215,10 @@ class PageSession:
             
             # Generate artifacts if configured
             await self._generate_artifacts()
-            
-            # Update capture status
-            self.page_result.capture_status = CaptureStatus.SUCCESS
+
+            # Update capture status only if not already set to PARTIAL
+            if self.page_result.capture_status != CaptureStatus.PARTIAL:
+                self.page_result.capture_status = CaptureStatus.SUCCESS
             
             logger.info(f"Page capture completed successfully: {url}")
             

@@ -70,7 +70,7 @@ class GTMDetector(BaseDetector, ResilientDetector):
                 result.add_event(event)
             
             # Validate dataLayer if enabled in context
-            if ctx.config.get("gtm", {}).get("validate_datalayer", True):
+            if ctx.config.get("validate_datalayer", True):
                 self._validate_datalayer(result, page, ctx)
             
             # Add analysis notes
@@ -426,8 +426,7 @@ class GTMDetector(BaseDetector, ResilientDetector):
             )
 
         # Check for unexpected container IDs if expected IDs are configured
-        gtm_config = ctx.config.get("gtm", {})
-        expected_ids = gtm_config.get("expected_container_ids", [])
+        expected_ids = ctx.config.get("expected_container_ids", [])
         if expected_ids:
             actual_ids = [c["container_id"] for c in valid_containers]
             unexpected_ids = [id for id in actual_ids if id not in expected_ids]

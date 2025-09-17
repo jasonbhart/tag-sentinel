@@ -54,7 +54,7 @@ class GA4Detector(BaseDetector, ResilientDetector):
     def supported_vendors(self) -> Set[Vendor]:
         """GA4 detector supports GA4 vendor."""
         return {Vendor.GA4}
-    
+
     async def detect(self, page: PageResult, ctx: DetectContext) -> DetectResult:
         """Analyze page for GA4 activity.
         

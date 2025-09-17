@@ -433,17 +433,21 @@ class PerHostRateLimiter:
     
     async def record_error(self, url: str, error_type: str):
         """Record error for rate limiting decisions.
-        
+
         Args:
             url: URL that failed
             error_type: Type of error (timeout, connection, etc.)
         """
         limiter = await self.get_limiter(url)
-        
+
         if error_type == "timeout":
             await limiter.record_failure(BackoffReason.TIMEOUT)
         elif error_type in ("connection", "network"):
             await limiter.record_failure(BackoffReason.CONNECTION_ERROR)
+        elif error_type == "rate_limited":
+            await limiter.record_failure(BackoffReason.RATE_LIMIT)
+        elif error_type == "server_error":
+            await limiter.record_failure(BackoffReason.SERVER_ERROR)
     
     def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
         """Get statistics for all host limiters."""

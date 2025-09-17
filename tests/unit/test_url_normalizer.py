@@ -24,10 +24,41 @@ class TestURLNormalizer:
         test_cases = [
             ("HTTP://Example.COM:80/Path/?param=value#fragment", "http://example.com/Path/?param=value"),
             ("https://site.com:443/", "https://site.com/"),
-            ("http://site.com/path#fragment", "http://site.com/path"),
-            ("https://example.com", "https://example.com/"),  # Adds trailing slash
+            ("http://site.com/path#fragment", "http://site.com/path"),  # Keep paths as-is
+            ("https://example.com", "https://example.com/"),  # Only root gets trailing slash
         ]
-        
+
+        for input_url, expected in test_cases:
+            result = normalize(input_url)
+            assert result == expected, f"Expected {expected}, got {result}"
+
+    def test_trailing_slash_normalization(self):
+        """Test conservative trailing slash normalization."""
+        test_cases = [
+            # Only root path gets trailing slash normalization
+            ("https://example.com", "https://example.com/"),
+            ("https://example.com/", "https://example.com/"),
+
+            # All other paths are preserved as-is to avoid breaking REST endpoints and files
+            ("https://example.com/path", "https://example.com/path"),
+            ("https://example.com/path/subpath", "https://example.com/path/subpath"),
+            ("https://example.com/deep/nested/path", "https://example.com/deep/nested/path"),
+
+            # Files with extensions remain unchanged
+            ("https://example.com/file.html", "https://example.com/file.html"),
+            ("https://example.com/path/file.js", "https://example.com/path/file.js"),
+            ("https://example.com/image.png", "https://example.com/image.png"),
+            ("https://example.com/document.pdf", "https://example.com/document.pdf"),
+
+            # Hidden files remain unchanged (proper canonical form)
+            ("https://example.com/.hidden", "https://example.com/.hidden"),
+            ("https://example.com/path/.gitignore", "https://example.com/path/.gitignore"),
+            ("https://example.com/.env", "https://example.com/.env"),
+
+            # Paths with trailing slashes are preserved
+            ("https://example.com/path/", "https://example.com/path/"),
+        ]
+
         for input_url, expected in test_cases:
             result = normalize(input_url)
             assert result == expected, f"Expected {expected}, got {result}"
@@ -37,6 +68,21 @@ class TestURLNormalizer:
         assert are_same_site("https://www.example.com/page1", "https://blog.example.com/page2")
         assert not are_same_site("https://example.com/page1", "https://other.com/page2")
         assert are_same_site("https://example.com/page1", "https://example.com/page2")
+
+    def test_same_site_multi_part_tlds(self):
+        """Test same-site comparison with multi-part TLDs (eTLD+1)."""
+        # Test that multi-part TLDs are handled correctly
+        assert not are_same_site("https://foo.co.uk/page1", "https://bar.co.uk/page2")
+        assert are_same_site("https://sub1.example.co.uk/page1", "https://sub2.example.co.uk/page2")
+        assert are_same_site("https://www.example.co.uk/page1", "https://example.co.uk/page2")
+
+        # Test other multi-part TLDs
+        assert not are_same_site("https://foo.com.au/page1", "https://bar.com.au/page2")
+        assert are_same_site("https://sub.example.com.au/page1", "https://example.com.au/page2")
+
+        # Test mixed TLD types
+        assert not are_same_site("https://example.com/page1", "https://example.co.uk/page2")
+        assert not are_same_site("https://example.co.uk/page1", "https://example.com/page2")
     
     def test_url_validation(self):
         """Test URL validation."""

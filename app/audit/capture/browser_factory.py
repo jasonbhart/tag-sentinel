@@ -296,6 +296,7 @@ class BrowserFactory:
         trace_path = context_overrides.pop('record_trace_path', None)
         original_options = context_overrides.copy()
 
+        original_exception = None
         try:
             # Try to get from pool first
             context = await self._get_pooled_context(context_overrides)
@@ -303,6 +304,9 @@ class BrowserFactory:
             if context is None:
                 # Create new context if none available in pool
                 context = await self.create_context(**context_overrides)
+            else:
+                # Increment count for pooled context that's now active
+                self._context_count += 1
 
             # Start tracing if requested
             if trace_path:
@@ -310,19 +314,51 @@ class BrowserFactory:
 
             yield context
 
+        except BaseException as e:
+            original_exception = e
+            raise
         finally:
             if context:
-                # Stop tracing before returning to pool or closing
-                if trace_path:
-                    try:
-                        await context.tracing.stop(path=trace_path)
-                        logger.debug(f"Trace saved: {trace_path}")
-                    except Exception as e:
-                        logger.warning(f"Failed to save trace: {e}")
+                cleanup_exception = None
+                try:
+                    # Shield cleanup operations from cancellation to ensure resource cleanup
+                    import asyncio
 
-                # Return to pool or close based on configuration and context state
-                await self._return_context_to_pool(context, original_options)
-                self._context_count -= 1
+                    # Stop tracing before returning to pool or closing
+                    if trace_path:
+                        try:
+                            await asyncio.shield(context.tracing.stop(path=trace_path))
+                            logger.debug(f"Trace saved: {trace_path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to save trace: {e}")
+
+                    # Return to pool or close based on configuration and context state
+                    await asyncio.shield(self._return_context_to_pool(context, original_options))
+                except BaseException as e:
+                    cleanup_exception = e
+                    logger.error(f"Failed to return context to pool or close: {e}")
+
+                    # Best-effort close to avoid leaks if pool return failed
+                    try:
+                        # Use public API and shield from cancellation
+                        await asyncio.shield(context.close())
+                        logger.debug("Performed best-effort context close after pool return failure")
+                    except BaseException as close_e:
+                        logger.error(f"Best-effort context close also failed: {close_e}")
+                finally:
+                    # Always decrement count when context is released, even on cleanup failures
+                    if self._context_count > 0:
+                        self._context_count -= 1
+                    else:
+                        logger.warning("Context count already at zero, skipping decrement")
+
+                    # Handle exception propagation properly
+                    if cleanup_exception and not original_exception:
+                        # Only raise cleanup exception if no original exception occurred
+                        raise cleanup_exception
+                    elif cleanup_exception and original_exception:
+                        # Chain cleanup exception to original, but preserve original as primary
+                        raise original_exception from cleanup_exception
     
     @asynccontextmanager 
     async def page(self, **context_overrides) -> AsyncGenerator[Page, None]:
@@ -389,10 +425,8 @@ class BrowserFactory:
         context_key = self._get_context_key(context_options)
 
         if context_key in self._context_pool:
-            # Move to end (most recently used)
-            context = self._context_pool[context_key]
-            del self._context_pool[context_key]
-            self._context_pool[context_key] = context
+            # Remove context from pool (don't re-insert until returned)
+            context = self._context_pool.pop(context_key)
 
             # Clear cookies and local storage for isolation
             try:
@@ -402,8 +436,7 @@ class BrowserFactory:
                 return context
             except Exception as e:
                 logger.warning(f"Failed to clear context state, creating new one: {e}")
-                # Remove from pool if it can't be cleared
-                del self._context_pool[context_key]
+                # Context is already removed from pool, so it won't be reused
 
         return None
 
