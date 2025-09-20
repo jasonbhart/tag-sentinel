@@ -84,12 +84,12 @@ class ScenarioOrchestrator:
         self.browser = browser
         self.config = config or get_privacy_config()
         self.artifacts_dir = artifacts_dir or Path("artifacts")
-        
-        # Components
-        self.classifier = CookieClassifier(config)
-        self.policy_engine = PolicyComplianceEngine(config)
-        self.gpc_simulator = GPCSimulator(config.gpc if config else None)
-        self.consent_automator = ConsentAutomator(config.cmp if config else None)
+
+        # Components - use self.config (effective config) instead of original config parameter
+        self.classifier = CookieClassifier(self.config)
+        self.policy_engine = PolicyComplianceEngine(self.config)
+        self.gpc_simulator = GPCSimulator(self.config.gpc)
+        self.consent_automator = ConsentAutomator(self.config.cmp)
         
         # Execution state
         self.execution_results: Dict[str, ScenarioExecutionResult] = {}

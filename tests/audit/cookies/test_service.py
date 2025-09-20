@@ -359,7 +359,10 @@ class TestAnalyzePagePrivacyFunction:
             
             # Verify service was created and used
             mock_service.analyze_page_privacy.assert_called_once_with(
-                page_url, ComplianceFramework.GDPR, False
+                page_url,
+                page_title=None,
+                compliance_framework=ComplianceFramework.GDPR,
+                parallel_execution=False
             )
     
     @pytest.mark.asyncio 
@@ -389,7 +392,10 @@ class TestAnalyzePagePrivacyFunction:
             
             # Verify all options were passed through
             mock_service.analyze_page_privacy.assert_called_once_with(
-                page_url, ComplianceFramework.GDPR, True
+                page_url,
+                page_title=page_title,
+                compliance_framework=ComplianceFramework.GDPR,
+                parallel_execution=True
             )
     
     @pytest.mark.asyncio

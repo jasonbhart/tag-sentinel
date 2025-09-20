@@ -409,25 +409,25 @@ class TestValidator:
             "type": "object",
             "properties": {
                 "email": {"type": "string", "format": "email"},
-                "uri": {"type": "string", "format": "uri"},
+                "uuid": {"type": "string", "format": "uuid"},
                 "date": {"type": "string", "format": "date"}
             }
         }
-        
+
         # Valid formatted data
         valid_data = {
             "email": "user@example.com",
-            "uri": "https://example.com/path",
+            "uuid": "123e4567-e89b-12d3-a456-426614174000",
             "date": "2023-12-25"
         }
-        
+
         issues = self.validator.validate(valid_data, schema)
         assert len(issues) == 0
-        
+
         # Invalid formatted data
         invalid_data = {
             "email": "not_an_email",
-            "uri": "not_a_uri",
+            "uuid": "not-a-valid-uuid",
             "date": "not_a_date"
         }
         
@@ -487,7 +487,12 @@ class TestValidatorConfiguration:
 
 class TestValidationIssueAnalysis:
     """Test cases for validation issue analysis and reporting."""
-    
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.config = SchemaConfig(enabled=True)
+        self.validator = Validator(self.config)
+
     def test_issue_categorization(self):
         """Test categorization of validation issues."""
         schema = {

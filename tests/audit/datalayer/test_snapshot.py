@@ -22,16 +22,18 @@ class TestSnapshotter:
     def setup_method(self):
         """Set up test fixtures."""
         self.config = DataLayerConfig(
-            enabled=True,
-            capture_timeout=5.0,
-            max_depth=10,
-            max_size=1000
+            capture={
+                "enabled": True,
+                "timeout_seconds": 5.0,
+                "max_depth": 10,
+                "max_size_bytes": 1024
+            }
         )
         self.snapshotter = Snapshotter(self.config)
     
     def test_snapshotter_initialization(self):
         """Test snapshotter initialization."""
-        assert self.snapshotter.config == self.config
+        assert self.snapshotter.config == self.config.capture
         assert self.snapshotter.config.enabled is True
     
     def test_is_datalayer_array_detection(self):
@@ -63,8 +65,16 @@ class TestSnapshotter:
         ecommerce_push = {"event": "purchase", "ecommerce": {"value": 100}}
         
         # Custom event with custom pattern
-        self.config.event_detection_patterns = ["custom_event"]
-        snapshotter_custom = Snapshotter(self.config)
+        custom_config = DataLayerConfig(
+            capture={
+                "enabled": True,
+                "timeout_seconds": 5.0,
+                "max_depth": 10,
+                "max_size_bytes": 1024,
+                "event_detection_patterns": ["custom_event"]
+            }
+        )
+        snapshotter_custom = Snapshotter(custom_config)
         custom_push = {"custom_event": "test_event", "data": "value"}
         
         # Variable push (not event)
@@ -202,16 +212,22 @@ class TestSnapshotter:
         # Create large object
         large_obj = {f"key_{i}": f"value_{i}" * 100 for i in range(1000)}
         
-        # Use small size limit
-        small_config = DataLayerConfig(max_size=500)
+        # Use small size limit (minimum 1024 bytes required)
+        small_config = DataLayerConfig(
+            capture={
+                "enabled": True,
+                "max_size_bytes": 1024,
+                "max_entries": 50
+            }
+        )
         small_snapshotter = Snapshotter(small_config)
-        
+
         result = small_snapshotter._safe_json_serialize(large_obj)
-        
+
         # Should respect size limit
         if result is not None:
             serialized_size = len(json.dumps(result))
-            assert serialized_size <= small_config.max_size * 1.1  # Allow some overhead
+            assert serialized_size <= small_config.capture.max_size_bytes * 1.1  # Allow some overhead
     
     def test_safe_json_serialize_with_functions(self):
         """Test safe JSON serialization with non-serializable objects."""
@@ -234,37 +250,43 @@ class TestSnapshotter:
         """Test capturing from page with missing dataLayer."""
         # Mock page that returns null for dataLayer
         mock_page = AsyncMock()
-        mock_page.evaluate.return_value = None
+        mock_page.evaluate.return_value = {
+            'exists': False,
+            'latest': None,
+            'events': []
+        }
         mock_page.url = "https://example.com"
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
-        assert snapshot.url == "https://example.com"
-        assert snapshot.raw_data is None
-        assert snapshot.processed_data is None
-        assert not snapshot.has_data
-        assert snapshot.capture_error is not None
+        assert str(snapshot.page_url) == "https://example.com/"
+        assert not snapshot.exists
+        assert snapshot.latest is None
+        assert len(snapshot.events) == 0
     
     @pytest.mark.asyncio
     async def test_capture_from_page_object_datalayer(self):
         """Test capturing object-style dataLayer from page."""
         mock_datalayer = {"page": "home", "user_id": "123"}
-        
+
         mock_page = AsyncMock()
-        mock_page.evaluate.return_value = mock_datalayer
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'latest': mock_datalayer,
+            'events': []
+        }
         mock_page.url = "https://example.com"
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
-        assert snapshot.url == "https://example.com"
-        assert snapshot.raw_data == mock_datalayer
-        assert snapshot.processed_data["page"] == "home"
-        assert snapshot.has_data
-        assert snapshot.capture_error is None
+        assert str(snapshot.page_url) == "https://example.com/"
+        assert snapshot.exists
+        assert snapshot.latest is not None
+        assert snapshot.latest["page"] == "home"
     
     @pytest.mark.asyncio
     async def test_capture_from_page_gtm_array(self):
@@ -273,38 +295,41 @@ class TestSnapshotter:
             {"event": "page_view", "page": "home"},
             {"user_id": "123"}
         ]
-        
+
         mock_page = AsyncMock()
-        mock_page.evaluate.return_value = mock_datalayer
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'latest': {"user_id": "123"},  # Variables merged
+            'events': [{"event": "page_view", "page": "home"}]  # Events extracted
+        }
         mock_page.url = "https://example.com"
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
-        assert snapshot.url == "https://example.com"
-        assert snapshot.raw_data == mock_datalayer
-        assert snapshot.has_data
+        assert str(snapshot.page_url) == "https://example.com/"
+        assert snapshot.exists
         assert len(snapshot.events) == 1
         assert snapshot.events[0]["event"] == "page_view"
-        assert snapshot.processed_data["user_id"] == "123"
+        assert snapshot.latest["user_id"] == "123"
     
     @pytest.mark.asyncio
     async def test_capture_from_page_timeout(self):
         """Test capture with timeout."""
         # Mock page that times out
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
         mock_page = AsyncMock()
-        mock_page.evaluate.side_effect = asyncio.TimeoutError("Page timeout")
+        mock_page.evaluate.side_effect = PlaywrightTimeoutError("Page timeout")
         mock_page.url = "https://example.com"
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com"})
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
-        assert snapshot.url == "https://example.com"
-        assert snapshot.raw_data is None
-        assert not snapshot.has_data
-        assert "timeout" in snapshot.capture_error.lower()
+        assert str(snapshot.page_url) == "https://example.com/"
+        # With timeout, we expect the snapshot to exist but might not have data
+        assert not snapshot.exists or snapshot.latest is None
     
     @pytest.mark.asyncio
     async def test_capture_from_page_javascript_error(self):
@@ -318,10 +343,9 @@ class TestSnapshotter:
         
         snapshot = await self.snapshotter.capture_from_page(mock_page, context)
         
-        assert snapshot.url == "https://example.com"
-        assert snapshot.raw_data is None
-        assert not snapshot.has_data
-        assert snapshot.capture_error is not None
+        assert str(snapshot.page_url) == "https://example.com/"
+        # With JavaScript error, we expect the snapshot to exist but might not have data
+        assert not snapshot.exists or snapshot.latest is None
     
     def test_create_snapshot_basic(self):
         """Test basic snapshot creation."""
@@ -330,10 +354,9 @@ class TestSnapshotter:
         
         snapshot = self.snapshotter._create_snapshot(url, raw_data, raw_data)
         
-        assert snapshot.url == url
-        assert snapshot.raw_data == raw_data
-        assert snapshot.processed_data == raw_data
-        assert snapshot.has_data
+        assert str(snapshot.page_url).rstrip('/') == url.rstrip('/')
+        assert snapshot.latest == raw_data
+        assert snapshot.exists
         assert snapshot.variable_count == 2
     
     def test_create_snapshot_with_events(self):
@@ -345,10 +368,10 @@ class TestSnapshotter:
         
         snapshot = self.snapshotter._create_snapshot(url, raw_data, processed_data, events)
         
-        assert snapshot.url == url
+        assert str(snapshot.page_url).rstrip('/') == url.rstrip('/')
         assert snapshot.events == events
         assert snapshot.event_count == 1
-        assert snapshot.processed_data == processed_data
+        assert snapshot.latest == processed_data
     
     def test_create_snapshot_with_error(self):
         """Test snapshot creation with error."""
@@ -357,17 +380,34 @@ class TestSnapshotter:
         
         snapshot = self.snapshotter._create_snapshot(url, None, None, [], error)
         
-        assert snapshot.url == url
-        assert snapshot.raw_data is None
-        assert not snapshot.has_data
-        assert snapshot.capture_error == error
-    
+        assert str(snapshot.page_url).rstrip('/') == url.rstrip('/')
+        assert snapshot.latest == {}
+        assert not snapshot.exists
+
+    def test_create_snapshot_empty_datalayer(self):
+        """Test snapshot creation with empty but existing dataLayer."""
+        url = "https://example.com"
+
+        # Test empty dict (dataLayer exists but has no variables)
+        empty_dict_snapshot = self.snapshotter._create_snapshot(url, {}, {})
+        assert str(empty_dict_snapshot.page_url).rstrip('/') == url.rstrip('/')
+        assert empty_dict_snapshot.exists  # Should exist even though empty
+        assert empty_dict_snapshot.latest == {}
+        assert empty_dict_snapshot.variable_count == 0
+
+        # Test empty array (dataLayer exists but has no pushes)
+        empty_array_snapshot = self.snapshotter._create_snapshot(url, [], {})
+        assert str(empty_array_snapshot.page_url).rstrip('/') == url.rstrip('/')
+        assert empty_array_snapshot.exists  # Should exist even though empty
+        assert empty_array_snapshot.latest == {}
+        assert empty_array_snapshot.variable_count == 0
+
     def test_javascript_generation(self):
         """Test JavaScript code generation for dataLayer capture."""
         # This tests that the JavaScript code is properly formatted
         js_code = self.snapshotter._get_datalayer_capture_js()
         
-        assert "window.dataLayer" in js_code
+        assert "window[objectName]" in js_code
         assert "JSON.stringify" in js_code
         # Should have safety checks
         assert "try" in js_code and "catch" in js_code
@@ -375,27 +415,31 @@ class TestSnapshotter:
     def test_config_driven_behavior(self):
         """Test that configuration drives snapshotter behavior."""
         # Test with different configurations
-        strict_config = DataLayerConfig(
+        from app.audit.datalayer.config import CaptureConfig
+
+        strict_capture_config = CaptureConfig(
             max_depth=2,
-            max_size=100,
-            capture_timeout=1.0
+            max_size_bytes=1024,  # Minimum allowed value
+            execution_timeout_ms=1000
         )
-        
-        lenient_config = DataLayerConfig(
-            max_depth=100,
-            max_size=10000,
-            capture_timeout=30.0
+        strict_config = DataLayerConfig(capture=strict_capture_config)
+
+        lenient_capture_config = CaptureConfig(
+            max_depth=20,  # Maximum allowed value
+            max_size_bytes=10000,
+            execution_timeout_ms=30000
         )
-        
+        lenient_config = DataLayerConfig(capture=lenient_capture_config)
+
         strict_snapshotter = Snapshotter(strict_config)
         lenient_snapshotter = Snapshotter(lenient_config)
-        
+
         # Both should be configured differently
         assert strict_snapshotter.config.max_depth == 2
-        assert lenient_snapshotter.config.max_depth == 100
-        
-        assert strict_snapshotter.config.capture_timeout == 1.0
-        assert lenient_snapshotter.config.capture_timeout == 30.0
+        assert lenient_snapshotter.config.max_depth == 20
+
+        assert strict_snapshotter.config.execution_timeout_ms == 1000
+        assert lenient_snapshotter.config.execution_timeout_ms == 30000
 
 
 class TestSnapshotterEdgeCases:

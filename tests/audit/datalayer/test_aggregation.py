@@ -1,12 +1,13 @@
 """Unit tests for DataLayer aggregation system.
 
-Fixed to match the actual implementation API signatures. Some tests are commented out
-due to implementation bugs in the actual code:
-- generate_aggregate_report() tries to create DLAggregate with non-existent fields
-- generate_issue_report() has a bug where defaultdict.most_common() is called but doesn't exist
-- Variable total_pages tracking bug where only variables present on a page get updated
+Tests the complete DataLayer aggregation functionality including:
+- Variable presence tracking and statistics
+- Event frequency analysis
+- Validation issue aggregation
+- Aggregate report generation
 
-These tests focus on the working functionality and document the implementation bugs.
+Some test cases remain commented out due to remaining implementation issues
+that need to be addressed separately.
 """
 
 import pytest
@@ -139,12 +140,12 @@ class TestDataAggregator:
         # Check presence rates
         page_stats = self.aggregator.variable_stats["page"]
         user_id_stats = self.aggregator.variable_stats["user_id"]
-        
-        # Note: The implementation has a bug where total_pages isn't updated for all variables
-        # when new pages are processed, only for variables that are present on that page
-        assert page_stats.presence_rate == 100.0  # Present on both pages (2/2)  
-        assert user_id_stats.presence_rate == 100.0  # Bug: total_pages is 1, not 2, so 1/1 = 100%
-        assert user_id_stats.total_pages == 1  # This shows the bug
+
+        # Now that the bug is fixed, both variables should have total_pages = 2
+        assert page_stats.presence_rate == 100.0  # Present on both pages (2/2)
+        assert user_id_stats.presence_rate == 50.0  # Present on 1 page out of 2 (1/2 = 50%)
+        assert user_id_stats.total_pages == 2  # Bug fixed: now correctly tracks total pages
+        assert page_stats.total_pages == 2
     
     def test_process_pages_with_events(self):
         """Test processing pages with events."""
@@ -169,34 +170,40 @@ class TestDataAggregator:
         assert self.aggregator.event_stats["page_view"].frequency == 1
         assert self.aggregator.event_stats["click"].frequency == 1
     
-    # Commented out due to implementation bug - method creates DLAggregate with wrong fields
-    # def test_generate_aggregate_report(self):
-    #     """Test generating aggregate report."""
-    #     # Process some pages
-    #     for i in range(10):            
-    #         # Some pages missing user_id
-    #         data = {"page": f"page{i}"}
-    #         if i % 3 == 0:  # Every 3rd page has user_id
-    #             data["user_id"] = f"user_{i}"
-    #         
-    #         self.aggregator.process_page_data(
-    #             page_url=f"https://example.com/page{i}",
-    #             latest_data=data,
-    #             events_data=[],
-    #             validation_issues=[]
-    #         )
-    #     
-    #     # Generate aggregate report (this returns a DLAggregate model)
-    #     aggregate = self.aggregator.generate_aggregate_report()
-    #     
-    #     # Should have basic stats
-    #     assert aggregate.total_pages == 10
-    #     assert aggregate.variables_found == 2  # page, user_id
-    #     assert aggregate.events_found == 0
-    #     
-    #     # Check variable analysis structure
-    #     assert "variable_analysis" in aggregate.__dict__
-    #     assert "event_analysis" in aggregate.__dict__
+    def test_generate_aggregate_report(self):
+        """Test generating aggregate report."""
+        # Process some pages
+        for i in range(10):
+            # Some pages missing user_id
+            data = {"page": f"page{i}"}
+            if i % 3 == 0:  # Every 3rd page has user_id
+                data["user_id"] = f"user_{i}"
+
+            self.aggregator.process_page_data(
+                page_url=f"https://example.com/page{i}",
+                latest_data=data,
+                events_data=[],
+                validation_issues=[]
+            )
+
+        # Generate aggregate report (this returns a DLAggregate model)
+        aggregate = self.aggregator.generate_aggregate_report()
+
+        # Should have basic stats
+        assert aggregate.total_pages == 10
+        assert len(aggregate.variables) == 2  # page, user_id variables
+        assert len(aggregate.events) == 0
+
+        # Check that variables are properly tracked
+        assert "page" in aggregate.variables
+        assert "user_id" in aggregate.variables
+
+        # Check variable presence rates
+        page_var = aggregate.variables["page"]
+        assert page_var.pages_with_variable == 10  # page present on all pages
+
+        user_id_var = aggregate.variables["user_id"]
+        assert user_id_var.pages_with_variable == 4  # user_id present on 4 pages (0,3,6,9)
     
     def test_get_variable_details(self):
         """Test getting detailed variable information."""
@@ -233,20 +240,70 @@ class TestDataAggregator:
             events_data=[{"event": "test_event"}],
             validation_issues=[]
         )
-        
+
         # Verify data exists
         assert self.aggregator.total_pages_processed == 1
         assert len(self.aggregator.variable_stats) == 1
         assert len(self.aggregator.event_stats) == 1
-        
+
         # Clear data
         self.aggregator.clear_data()
-        
+
         # Verify data is cleared
         assert self.aggregator.total_pages_processed == 0
         assert len(self.aggregator.variable_stats) == 0
         assert len(self.aggregator.event_stats) == 0
         assert len(self.aggregator.issue_patterns) == 0
+
+    def test_example_events_preservation_in_aggregate_report(self):
+        """Test that example events are preserved from EventStats to EventFrequency."""
+        # Test events with rich data
+        test_events = [
+            {"event": "page_view", "user_id": "123", "page_title": "Home"},
+            {"event": "page_view", "user_id": "456", "page_title": "About"},
+            {"eventName": "click", "button_id": "submit", "category": "form"},
+            {"eventAction": "purchase", "product_id": "abc123", "value": 29.99},
+            {"eventAction": "purchase", "product_id": "def456", "value": 49.99},
+        ]
+
+        # Process multiple pages with events
+        for i, event_data in enumerate(test_events):
+            page_url = f"https://test.com/page{i}"
+            self.aggregator.process_page_data(
+                page_url=page_url,
+                latest_data={"page": f"page{i}"},
+                events_data=[event_data],
+                validation_issues=[]
+            )
+
+        # Generate aggregate report
+        aggregate = self.aggregator.generate_aggregate_report()
+
+        # Check that example events are preserved
+        assert "page_view" in aggregate.events
+        assert "click" in aggregate.events
+        assert "purchase" in aggregate.events
+
+        # Check page_view events
+        page_view_freq = aggregate.events["page_view"]
+        assert len(page_view_freq.example_events) == 2
+
+        # Check example structure
+        example = page_view_freq.example_events[0]
+        assert isinstance(example, dict)
+        assert "data" in example
+        assert "page_url" in example
+        assert "timestamp" in example
+        assert example["data"]["user_id"] in ["123", "456"]
+
+        # Check purchase events
+        purchase_freq = aggregate.events["purchase"]
+        assert len(purchase_freq.example_events) == 2
+
+        example = purchase_freq.example_events[0]
+        assert "data" in example
+        assert example["data"]["product_id"] in ["abc123", "def456"]
+        assert "value" in example["data"]
 
 
 class TestVariableStats:

@@ -81,6 +81,10 @@ class ScheduleEngine:
         self.run_dispatcher = run_dispatcher
         self.environment_manager = environment_manager
 
+        # Set up completion callback for lock release
+        if hasattr(run_dispatcher, 'completion_callback') and run_dispatcher.completion_callback is None:
+            run_dispatcher.completion_callback = self._on_run_completion
+
         # Metrics
         self.metrics_collector = metrics_collector
         self.metrics = SchedulingMetrics(metrics_collector) if metrics_collector else None
@@ -375,10 +379,36 @@ class ScheduleEngine:
             await self._calculate_next_run(schedule_state)
             return
 
+        # Resolve environment config and merge with schedule params first
+        try:
+            resolved_config = self.environment_manager.resolve_environment_config(
+                site_id=schedule.site_id,
+                environment=schedule.environment,
+                overrides=schedule.params  # Schedule params as overrides
+            )
+
+            # Get audit params from resolved config and merge with schedule params
+            merged_params = resolved_config.get_audit_params()
+            merged_params.update(schedule.params)  # Schedule params take precedence
+
+        except Exception as e:
+            logger.error(f"Failed to resolve environment config for {schedule.site_id}:{schedule.environment}: {e}")
+            # Environment validation is required - do not proceed with invalid config
+            logger.warning(f"Skipping scheduled run for {schedule.site_id}:{schedule.environment} due to environment resolution failure")
+
+            # Use existing error handling system to track failure and manage schedule state
+            self._handle_schedule_error(schedule_state, f"Environment resolution failed: {e}")
+
+            # Only recalculate next run if schedule wasn't disabled by error handling
+            if schedule_state.status != ScheduleStateEnum.DISABLED:
+                await self._calculate_next_run(schedule_state)
+
+            return  # Exit early - do not create any run requests
+
         # Check for catch-up runs if enabled
         catch_up_runs = []
         if schedule.catch_up_policy and getattr(schedule.catch_up_policy, 'enabled', True):
-            catch_up_runs = await self._calculate_catch_up_runs(schedule_state, current_time)
+            catch_up_runs = await self._calculate_catch_up_runs(schedule_state, current_time, merged_params)
 
         # Create run requests (current + catch-up)
         run_requests = []
@@ -391,7 +421,7 @@ class ScheduleEngine:
             environment=schedule.environment,
             priority=0,  # Normal priority for scheduled runs
             scheduled_at=schedule_state.next_run or current_time,
-            params=schedule.params.copy(),
+            params=merged_params,
             metadata=schedule.metadata.copy()
         )
         run_requests.append(current_run)
@@ -435,24 +465,55 @@ class ScheduleEngine:
         if not force_concurrency:
             # Check concurrency limits
             try:
-                async with self.concurrency_manager.acquire_lock(
+                # Acquire lock manually (don't use async with to avoid early release)
+                lock_info = await self.concurrency_manager.acquire_lock_manual(
                     schedule.site_id,
                     schedule.environment,
                     timeout_seconds=30,  # Quick timeout for scheduling
                     wait_timeout_seconds=1
-                ) as lock_info:
-                    if lock_info is None:
-                        logger.info(f"Skipping run for {schedule.id} due to concurrency limit")
-                        self._stats.lock_conflicts += 1
+                )
 
-                        # Record metrics
-                        if self.metrics:
-                            self.metrics.increment_lock_conflicts()
+                if lock_info is None:
+                    logger.info(f"Skipping run for {schedule.id} due to concurrency limit")
+                    self._stats.lock_conflicts += 1
 
-                        return None
+                    # Record metrics
+                    if self.metrics:
+                        self.metrics.increment_lock_conflicts()
 
-                    # Lock acquired, dispatch the run
-                    return await self._enqueue_run(run_request)
+                    return None
+
+                # Lock acquired, store lock info in run request metadata for later release
+                run_request.metadata["_lock_owner_id"] = lock_info.owner_id
+                run_request.metadata["_lock_key"] = lock_info.key
+
+                # Dispatch the run (lock will be released when run completes)
+                try:
+                    result = await self._enqueue_run(run_request)
+                    if result is None:
+                        # Enqueuing failed - release the lock immediately
+                        logger.warning(f"Enqueuing failed for {schedule.id}, releasing acquired lock")
+                        await self.concurrency_manager.release_lock_manual(
+                            site_id=schedule.site_id,
+                            environment=schedule.environment,
+                            owner_id=lock_info.owner_id
+                        )
+                        # Remove lock metadata since we released it
+                        run_request.metadata.pop("_lock_owner_id", None)
+                        run_request.metadata.pop("_lock_key", None)
+                    return result
+                except Exception as enqueue_error:
+                    # Enqueuing raised an exception - release the lock immediately
+                    logger.error(f"Enqueuing raised exception for {schedule.id}, releasing acquired lock: {enqueue_error}")
+                    await self.concurrency_manager.release_lock_manual(
+                        site_id=schedule.site_id,
+                        environment=schedule.environment,
+                        owner_id=lock_info.owner_id
+                    )
+                    # Remove lock metadata since we released it
+                    run_request.metadata.pop("_lock_owner_id", None)
+                    run_request.metadata.pop("_lock_key", None)
+                    return None
 
             except Exception as e:
                 logger.warning(f"Failed to acquire lock for {schedule.id}: {e}")
@@ -470,12 +531,52 @@ class ScheduleEngine:
     async def _enqueue_run(self, run_request: RunRequest) -> Optional[str]:
         """Enqueue a run request for dispatch."""
         try:
-            await self.run_dispatcher.enqueue_run(run_request)
-            logger.info(f"Enqueued run {run_request.id} for schedule {run_request.schedule_id}")
-            return run_request.id
+            success = await self.run_dispatcher.enqueue_run(run_request)
+            if success:
+                logger.info(f"Enqueued run {run_request.id} for schedule {run_request.schedule_id}")
+                return run_request.id
+            else:
+                logger.warning(f"Failed to enqueue run {run_request.id}: blocked by idempotency or queue full")
+                return None
         except Exception as e:
             logger.error(f"Failed to enqueue run {run_request.id}: {e}")
             return None
+
+    async def _on_run_completion(self, run_result) -> None:
+        """Callback invoked when a run completes - releases any held locks.
+
+        Args:
+            run_result: The completed run result
+        """
+        try:
+            # Check if this run had a lock that needs to be released
+            if (hasattr(run_result, 'metadata') and
+                run_result.metadata and
+                '_lock_owner_id' in run_result.metadata and
+                '_lock_key' in run_result.metadata):
+
+                # Extract site_id and environment from metadata
+                site_id = run_result.metadata.get('site_id')
+                environment = run_result.metadata.get('environment')
+                owner_id = run_result.metadata.get('_lock_owner_id')
+
+                if site_id and environment and owner_id:
+                    # Release the lock
+                    released = await self.concurrency_manager.release_lock_manual(
+                        site_id=site_id,
+                        environment=environment,
+                        owner_id=owner_id
+                    )
+
+                    if released:
+                        logger.info(f"Released lock for completed run {run_result.run_id} ({site_id}:{environment})")
+                    else:
+                        logger.warning(f"Failed to release lock for run {run_result.run_id} ({site_id}:{environment}) - may have expired")
+                else:
+                    logger.warning(f"Run {run_result.run_id} has lock metadata but missing site_id/environment/owner_id")
+
+        except Exception as e:
+            logger.error(f"Error releasing lock for completed run {run_result.run_id}: {e}")
 
     async def _calculate_next_run(self, schedule_state: ScheduleRuntimeState) -> None:
         """Calculate the next run time for a schedule."""
@@ -492,7 +593,8 @@ class ScheduleEngine:
     async def _calculate_catch_up_runs(
         self,
         schedule_state: ScheduleRuntimeState,
-        current_time: datetime
+        current_time: datetime,
+        merged_params: Dict[str, Any]
     ) -> List[RunRequest]:
         """Calculate catch-up runs based on policy."""
         schedule = schedule_state.schedule
@@ -539,7 +641,7 @@ class ScheduleEngine:
                 priority=5,  # High priority for immediate catch-up
                 scheduled_at=current_time,
                 params={
-                    **schedule.params,
+                    **merged_params,
                     "catch_up": True,
                     "missed_runs": len(missed_times),
                     "catch_up_strategy": "run_immediately"
@@ -557,7 +659,7 @@ class ScheduleEngine:
                 priority=0,  # Normal priority for scheduled catch-up
                 scheduled_at=current_time,
                 params={
-                    **schedule.params,
+                    **merged_params,
                     "catch_up": True,
                     "missed_runs": len(missed_times),
                     "catch_up_strategy": "schedule_next"
@@ -578,7 +680,7 @@ class ScheduleEngine:
                     priority=1,  # Lower priority for gradual catch-up runs
                     scheduled_at=missed_time,
                     params={
-                        **schedule.params,
+                        **merged_params,
                         "catch_up": True,
                         "missed_time": missed_time.isoformat(),
                         "catch_up_index": i + 1,

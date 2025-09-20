@@ -176,48 +176,92 @@ class DataLayerService:
     async def capture_and_validate(
         self,
         page: Page,
+        context_or_page_url: DLContext | str | None = None,
+        schema_or_site_domain: dict | str | None = None,
+        site_domain_or_run_id: str | None = None,
+        run_id: str | None = None,
+        # Backward compatibility parameters
         page_url: str | None = None,
-        site_domain: str | None = None,
-        run_id: str | None = None
+        site_domain: str | None = None
     ) -> DLResult:
         """Capture and validate dataLayer from a single page.
-        
+
         Args:
             page: Playwright page instance
-            page_url: Override page URL (uses page.url if not provided)
-            site_domain: Site domain for site-specific configuration
-            run_id: Optional run identifier for aggregation
-            
+            context_or_page_url: Either DLContext for new style calls or page URL string for legacy calls
+            schema_or_site_domain: Schema dict (if DLContext provided) or site domain (if page_url provided)
+            site_domain_or_run_id: Site domain (if schema provided) or run_id (if no schema)
+            run_id: Run identifier for aggregation (if site_domain provided)
+
         Returns:
             Complete dataLayer result with snapshot, validation, and metadata
         """
         start_time = datetime.utcnow()
         processing_start = datetime.now()
-        
-        if not page_url:
-            page_url = page.url
-        
-        logger.debug(f"Starting dataLayer capture and validation for {page_url}")
-        
+
+        # Handle both calling conventions with backward compatibility
+        if isinstance(context_or_page_url, DLContext):
+            # New style: capture_and_validate(page, context, schema)
+            provided_context = context_or_page_url
+            schema = schema_or_site_domain if isinstance(schema_or_site_domain, dict) else None
+            resolved_site_domain = site_domain_or_run_id if isinstance(site_domain_or_run_id, str) else None
+            resolved_page_url = page.url  # DLContext doesn't have url field
+        else:
+            # Legacy style or explicit keyword arguments
+            provided_context = None
+
+            # Check for explicit keyword arguments first (backward compatibility)
+            if page_url is not None:
+                resolved_page_url = page_url
+            else:
+                resolved_page_url = context_or_page_url or page.url
+
+            if site_domain is not None:
+                resolved_site_domain = site_domain
+                # When using explicit site_domain keyword, schema comes from second positional or is None
+                schema = schema_or_site_domain if isinstance(schema_or_site_domain, dict) else None
+            else:
+                # Original positional logic
+                if isinstance(schema_or_site_domain, dict):
+                    # Third parameter is a schema dict
+                    schema = schema_or_site_domain
+                    resolved_site_domain = site_domain_or_run_id if isinstance(site_domain_or_run_id, str) else None
+                else:
+                    # Third parameter is site_domain string (legacy style)
+                    schema = None
+                    resolved_site_domain = schema_or_site_domain if isinstance(schema_or_site_domain, str) else None
+                    if not run_id:
+                        run_id = site_domain_or_run_id
+
+        logger.debug(f"Starting dataLayer capture and validation for {resolved_page_url}")
+
         # Get site-specific configuration if needed
-        if site_domain:
-            site_config = get_site_datalayer_config(site_domain)
+        if resolved_site_domain:
+            site_config = get_site_datalayer_config(resolved_site_domain)
         else:
             site_config = self.config
-        
-        # Create context for this capture
-        context = DLContext(
-            env=site_config.environment,
-            data_layer_object=site_config.capture.object_name,
-            max_depth=site_config.capture.max_depth,
-            max_entries=site_config.capture.max_entries,
-            max_size_bytes=site_config.capture.max_size_bytes,
-            schema_path=site_config.validation.schema_path
-        )
+
+        # Create or merge context for this capture
+        if provided_context:
+            # Start from provided context and only update missing values with defaults
+            context = provided_context.model_copy()
+            # Fill in schema_path from site config if not provided
+            if not context.schema_path:
+                context.schema_path = site_config.validation.schema_path
+        else:
+            # Legacy path: create context from site config
+            context = DLContext(
+                env=site_config.environment,
+                data_layer_object=site_config.capture.object_name,
+                max_depth=site_config.capture.max_depth,
+                max_entries=site_config.capture.max_entries,
+                max_size_bytes=site_config.capture.max_size_bytes,
+                schema_path=site_config.validation.schema_path
+            )
         
         result = DLResult(
             snapshot=DataLayerSnapshot(
-                page_url=page_url,
+                page_url=resolved_page_url,
                 exists=False,
                 object_name=context.data_layer_object
             ),
@@ -228,21 +272,36 @@ class DataLayerService:
         try:
             # Step 1: Capture dataLayer snapshot with graceful degradation
             with graceful_degradation(
-                fallback_value=DataLayerSnapshot(page_url=page_url, exists=False, object_name=context.data_layer_object),
+                fallback_value=DataLayerSnapshot(page_url=resolved_page_url, exists=False, object_name=context.data_layer_object),
                 operation_name="capture_snapshot",
                 component=ComponentType.CAPTURE,
                 error_handler=self.error_handler
             ) as snapshot:
-                snapshot = await self._capture_snapshot(page, context, page_url)
+                snapshot = await self._capture_snapshot(page, context, resolved_page_url)
                 result.snapshot = snapshot
             
             if not result.snapshot.exists:
                 result.add_note("DataLayer object not found on page")
-                logger.debug(f"No dataLayer found on {page_url}")
+                logger.debug(f"No dataLayer found on {resolved_page_url}")
             else:
                 logger.debug(f"DataLayer captured: {result.snapshot.variable_count} variables, {result.snapshot.event_count} events")
-                
-                # Step 2: Apply redaction if enabled with graceful degradation
+
+                # Step 2: Perform schema validation if enabled with graceful degradation (BEFORE redaction)
+                if site_config.validation.enabled and (schema or context.schema_path):
+                    with graceful_degradation(
+                        fallback_value=None,
+                        operation_name="perform_validation",
+                        component=ComponentType.VALIDATION,
+                        error_handler=self.error_handler
+                    ):
+                        if schema:
+                            # Use inline schema dict
+                            await self._perform_validation_with_schema(result, schema, resolved_page_url)
+                        else:
+                            # Use schema from path
+                            await self._perform_validation(result, context.schema_path, resolved_page_url)
+
+                # Step 3: Apply redaction if enabled with graceful degradation (AFTER validation)
                 if site_config.redaction.enabled and (result.snapshot.latest or result.snapshot.events):
                     with graceful_degradation(
                         fallback_value=None,
@@ -250,41 +309,31 @@ class DataLayerService:
                         component=ComponentType.REDACTION,
                         error_handler=self.error_handler
                     ):
-                        await self._apply_redaction(result, site_domain)
-                
-                # Step 3: Perform schema validation if enabled with graceful degradation
-                if site_config.validation.enabled and context.schema_path:
-                    with graceful_degradation(
-                        fallback_value=None,
-                        operation_name="perform_validation",
-                        component=ComponentType.VALIDATION,
-                        error_handler=self.error_handler
-                    ):
-                        await self._perform_validation(result, context.schema_path, page_url)
-                
-                # Step 4: Update aggregation if running
-                if self.aggregator:
-                    self._update_aggregation(result, run_id)
-            
-            # Calculate processing time
+                        await self._apply_redaction(result, resolved_site_domain)
+
+            # Calculate processing time first
             processing_end = datetime.now()
             processing_time = (processing_end - processing_start).total_seconds() * 1000
             result.processing_time_ms = processing_time
+
+            # Step 4: Update aggregation if running (moved outside if/else to count all page attempts)
+            if self.aggregator:
+                self._update_aggregation(result, run_id)
             
             # Update statistics
             self._update_processing_stats(result)
             
-            logger.debug(f"DataLayer processing complete for {page_url} in {processing_time:.1f}ms")
+            logger.debug(f"DataLayer processing complete for {resolved_page_url} in {processing_time:.1f}ms")
             return result
             
         except Exception as e:
-            logger.error(f"DataLayer processing failed for {page_url}: {e}")
+            logger.error(f"DataLayer processing failed for {resolved_page_url}: {e}")
             
             # Track the error
             error = ServiceError(
                 error_type="processing_failure",
                 message=str(e),
-                page_url=page_url,
+                page_url=resolved_page_url,
                 component="capture_and_validate",
                 exception=e
             )
@@ -347,10 +396,16 @@ class DataLayerService:
                 except Exception as e:
                     logger.error(f"Failed to process page {url}: {e}")
                     # Return minimal result on error
-                    return DLResult(
+                    error_result = DLResult(
                         snapshot=DataLayerSnapshot(page_url=url, exists=False),
                         capture_error=str(e)
                     )
+
+                    # Update aggregation to count failed pages
+                    if self.aggregator:
+                        self._update_aggregation(error_result, run_id)
+
+                    return error_result
         
         # Execute all captures concurrently
         tasks = [
@@ -447,7 +502,7 @@ class DataLayerService:
         page_url: str
     ) -> None:
         """Perform schema validation on captured data.
-        
+
         Args:
             result: Result object to update with validation issues
             schema_path: Path to schema file
@@ -455,7 +510,7 @@ class DataLayerService:
         """
         try:
             snapshot = result.snapshot
-            
+
             if snapshot.latest or snapshot.events:
                 issues = self.validator.validate_snapshot(
                     snapshot.latest or {},
@@ -463,22 +518,78 @@ class DataLayerService:
                     schema_path,
                     page_url
                 )
-                
+
                 result.issues.extend(issues)
-                
+
+                # Add summary note about validation results (maintain consistency with inline schema validation)
                 if issues:
                     critical_count = len([i for i in issues if i.severity == ValidationSeverity.CRITICAL])
                     warning_count = len([i for i in issues if i.severity == ValidationSeverity.WARNING])
-                    
+
                     result.add_note(
-                        f"Validation found {len(issues)} issues "
+                        f"Schema validation found {len(issues)} issues "
                         f"({critical_count} critical, {warning_count} warnings)"
                     )
-                    
-                    logger.debug(f"Validation found {len(issues)} issues for {page_url}")
                 else:
                     result.add_note("Schema validation passed")
-                    
+
+                logger.debug(f"Schema validation completed for {page_url}: {len(issues)} issues found")
+        except Exception as e:
+            logger.error(f"Schema validation failed for {page_url}: {e}")
+            result.validation_error = str(e)
+            result.add_note(f"Validation error: {e}")
+
+    async def _perform_validation_with_schema(
+        self,
+        result: DLResult,
+        schema_dict: dict,
+        page_url: str
+    ) -> None:
+        """Perform schema validation on captured data using inline schema.
+
+        Args:
+            result: Result object to update with validation issues
+            schema_dict: Schema dictionary for validation
+            page_url: Page URL for validation context
+        """
+        try:
+            snapshot = result.snapshot
+
+            if snapshot.latest or snapshot.events:
+                all_issues = []
+
+                # Validate latest data using validate_data with proper page_url
+                if snapshot.latest:
+                    latest_issues = self.validator.validate_data(snapshot.latest, schema_dict, page_url)
+                    all_issues.extend(latest_issues)
+                    result.issues.extend(latest_issues)
+
+                # Validate events if present, mirroring validate_snapshot behavior
+                if snapshot.events:
+                    for i, event in enumerate(snapshot.events):
+                        event_issues = self.validator.validate_data(event, schema_dict, page_url)
+
+                        # Adjust paths to indicate event context (mirror validate_snapshot logic)
+                        for issue in event_issues:
+                            issue.path = f"/events/{i}{issue.path}"
+                            issue.event_type = event.get('event') or event.get('eventName')
+
+                        all_issues.extend(event_issues)
+                        result.issues.extend(event_issues)
+
+                if all_issues:
+                    critical_count = len([i for i in all_issues if i.severity == ValidationSeverity.CRITICAL])
+                    warning_count = len([i for i in all_issues if i.severity == ValidationSeverity.WARNING])
+
+                    result.add_note(
+                        f"Schema validation found {len(all_issues)} issues "
+                        f"({critical_count} critical, {warning_count} warnings)"
+                    )
+
+                    logger.debug(f"Schema validation found {len(all_issues)} issues for {page_url}")
+                else:
+                    result.add_note("Schema validation passed")
+
         except Exception as e:
             logger.warning(f"Validation failed: {e}")
             result.validation_error = str(e)

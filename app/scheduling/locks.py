@@ -680,6 +680,96 @@ class ConcurrencyManager:
             else:
                 logger.warning(f"Failed to release lock: {site_id}:{environment} (may have expired)")
 
+    async def acquire_lock_manual(
+        self,
+        site_id: str,
+        environment: str,
+        timeout_seconds: Optional[int] = None,
+        wait_timeout_seconds: int = 60,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Optional[LockInfo]:
+        """Manually acquire a lock without automatic release.
+
+        This method returns the LockInfo directly instead of using async context manager.
+        The caller is responsible for releasing the lock using release_lock_manual().
+
+        Args:
+            site_id: Site identifier
+            environment: Environment name
+            timeout_seconds: Lock timeout (default: manager default)
+            wait_timeout_seconds: Time to wait for lock acquisition
+            metadata: Additional lock metadata
+
+        Returns:
+            LockInfo if lock acquired successfully, None if acquisition failed
+        """
+        lock_key = self._make_lock_key(site_id, environment)
+        owner_id = f"{self.instance_id}:{asyncio.current_task().get_name()}" # type: ignore
+        timeout = timeout_seconds or self.default_timeout_seconds
+        metadata = metadata or {}
+
+        # Add manager metadata
+        metadata.update({
+            'site_id': site_id,
+            'environment': environment,
+            'manager_instance': self.instance_id,
+            'acquired_by_task': asyncio.current_task().get_name() if asyncio.current_task() else 'unknown' # type: ignore
+        })
+
+        # Try to acquire lock with retries
+        start_time = time.time()
+        acquired = False
+
+        while not acquired and (time.time() - start_time) < wait_timeout_seconds:
+            acquired = await self.backend.acquire_lock(
+                lock_key,
+                owner_id,
+                timeout,
+                metadata
+            )
+
+            if not acquired:
+                await asyncio.sleep(1)  # Wait before retry
+
+        if not acquired:
+            logger.warning(f"Failed to acquire lock for {site_id}:{environment} within {wait_timeout_seconds} seconds")
+            return None
+
+        # Get lock info
+        lock_info = await self.backend.get_lock_info(lock_key)
+        if not lock_info:
+            logger.error(f"Lock acquired but info not available for {lock_key}")
+            return None
+
+        logger.info(f"Manually acquired lock: {site_id}:{environment} (owner: {owner_id})")
+        return lock_info
+
+    async def release_lock_manual(
+        self,
+        site_id: str,
+        environment: str,
+        owner_id: str
+    ) -> bool:
+        """Manually release a lock acquired with acquire_lock_manual().
+
+        Args:
+            site_id: Site identifier
+            environment: Environment name
+            owner_id: Owner ID from LockInfo
+
+        Returns:
+            True if lock was successfully released
+        """
+        lock_key = self._make_lock_key(site_id, environment)
+        released = await self.backend.release_lock(lock_key, owner_id)
+
+        if released:
+            logger.info(f"Manually released lock: {site_id}:{environment}")
+        else:
+            logger.warning(f"Failed to manually release lock: {site_id}:{environment} (may have expired)")
+
+        return released
+
     async def is_locked(self, site_id: str, environment: str) -> bool:
         """Check if site-environment combination is locked.
 

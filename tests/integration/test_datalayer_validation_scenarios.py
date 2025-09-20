@@ -105,7 +105,13 @@ class TestRealWorldValidationScenarios:
         for scenario in valid_scenarios:
             mock_page = AsyncMock()
             mock_page.url = "https://example.com/ga4-test"
-            mock_page.evaluate.return_value = scenario["data"]
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario["data"],
+                'events': [],
+                'truncated': False
+            }
             
             context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/ga4-test"})
             result = await integration_service.capture_and_validate(mock_page, context, ga4_schema)
@@ -150,7 +156,13 @@ class TestRealWorldValidationScenarios:
         for scenario in invalid_scenarios:
             mock_page = AsyncMock()
             mock_page.url = "https://example.com/ga4-invalid"
-            mock_page.evaluate.return_value = scenario["data"]
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario["data"],
+                'events': [],
+                'truncated': False
+            }
             
             context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/ga4-invalid"})
             result = await integration_service.capture_and_validate(mock_page, context, ga4_schema)
@@ -159,9 +171,9 @@ class TestRealWorldValidationScenarios:
             assert result.snapshot.exists
             assert len(result.issues) > 0, f"Expected validation errors for {scenario['name']}"
             
-            # Should have error severity issues
-            error_issues = [issue for issue in result.issues if issue.severity == ValidationSeverity.CRITICAL]
-            assert len(error_issues) > 0
+            # Should have CRITICAL severity issues
+            critical_issues = [issue for issue in result.issues if issue.severity == ValidationSeverity.CRITICAL]
+            assert len(critical_issues) > 0, f"Expected validation errors with severity CRITICAL for {scenario['name']}, got: {[f'{issue.severity.value}: {issue.message}' for issue in result.issues]}"
     
     @pytest.mark.asyncio
     async def test_adobe_analytics_validation(self, integration_service):
@@ -297,7 +309,13 @@ class TestRealWorldValidationScenarios:
         
         mock_page = AsyncMock()
         mock_page.url = "https://example.com/adobe-test"
-        mock_page.evaluate.return_value = valid_adobe_data
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': valid_adobe_data,
+            'events': [],
+            'truncated': False
+        }
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/adobe-test"})
         result = await integration_service.capture_and_validate(mock_page, context, adobe_schema)
@@ -390,7 +408,13 @@ class TestRealWorldValidationScenarios:
         
         mock_page = AsyncMock()
         mock_page.url = "https://retailcorp.com/products/widget"
-        mock_page.evaluate.return_value = valid_business_data
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': valid_business_data,
+            'events': [],
+            'truncated': False
+        }
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://retailcorp.com/products/widget"})
         result = await integration_service.capture_and_validate(mock_page, context, retail_schema)
@@ -426,18 +450,28 @@ class TestRealWorldValidationScenarios:
         for scenario in invalid_scenarios:
             mock_page = AsyncMock()
             mock_page.url = f"https://retailcorp.com/invalid-{scenario['name']}"
-            mock_page.evaluate.return_value = scenario["data"]
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario["data"],
+                'events': [],
+                'truncated': False
+            }
             
-            context = DLContext(url=f"https://retailcorp.com/invalid-{scenario['name']}")
+            context = DLContext(env='test')
             result = await integration_service.capture_and_validate(mock_page, context, retail_schema)
             
             # Should have validation errors
             assert result.snapshot.exists
             assert len(result.issues) > 0, f"Expected validation errors for {scenario['name']}"
             
-            # Check for expected error types
-            error_messages = [issue.message.lower() for issue in result.issues]
-            assert any(expected in ' '.join(error_messages) for expected in scenario["expected_errors"])
+            # Check for expected error keywords in schema_rule field
+            found_error_types = {issue.schema_rule for issue in result.issues if issue.schema_rule}
+            expected_errors = set(scenario["expected_errors"])
+
+            # Verify ALL expected error types are found
+            missing_errors = expected_errors - found_error_types
+            assert len(missing_errors) == 0, f"Missing expected validation error types {missing_errors} for {scenario['name']}. Found error types: {found_error_types}. Issues: {[f'{issue.schema_rule}: {issue.message}' for issue in result.issues]}"
     
     @pytest.mark.asyncio
     async def test_schema_evolution_compatibility(self, integration_service):
@@ -547,9 +581,15 @@ class TestRealWorldValidationScenarios:
         for schema_version, schema in [("v1", schema_v1), ("v2", schema_v2)]:
             mock_page = AsyncMock()
             mock_page.url = f"https://example.com/compat-test-{schema_version}"
-            mock_page.evaluate.return_value = v1_compatible_data
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': v1_compatible_data,
+                'events': [],
+                'truncated': False
+            }
             
-            context = DLContext(url=f"https://example.com/compat-test-{schema_version}")
+            context = DLContext(env='test')
             result = await integration_service.capture_and_validate(mock_page, context, schema)
             
             # v1 data should pass validation against both schemas
@@ -559,7 +599,13 @@ class TestRealWorldValidationScenarios:
         # Test v2 data against v2 schema only
         mock_page = AsyncMock()
         mock_page.url = "https://example.com/v2-enhanced"
-        mock_page.evaluate.return_value = v2_enhanced_data
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': v2_enhanced_data,
+            'events': [],
+            'truncated': False
+        }
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/v2-enhanced"})
         result = await integration_service.capture_and_validate(mock_page, context, schema_v2)

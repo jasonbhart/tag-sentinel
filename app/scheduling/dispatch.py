@@ -156,6 +156,7 @@ class MockAuditRunnerBackend(RunDispatcherBackend):
             status=RunStatus.DISPATCHED,
             started_at=datetime.now(timezone.utc),
             metadata={
+                **run_request.metadata,  # Preserve original metadata including lock info
                 "site_id": run_request.site_id,
                 "environment": run_request.environment,
                 "mock_backend": True
@@ -249,7 +250,8 @@ class RunDispatcher:
         max_queue_size: int = 1000,
         max_concurrent_runs: int = 10,
         idempotency_window_minutes: int = 60,
-        cleanup_interval_seconds: int = 300
+        cleanup_interval_seconds: int = 300,
+        completion_callback: Optional[Callable[[RunResult], Awaitable[None]]] = None
     ):
         """Initialize run dispatcher.
 
@@ -259,12 +261,14 @@ class RunDispatcher:
             max_concurrent_runs: Maximum concurrent runs
             idempotency_window_minutes: Window for idempotency checking
             cleanup_interval_seconds: Interval for cleanup tasks
+            completion_callback: Optional callback called when runs complete
         """
         self.backend = backend
         self.max_queue_size = max_queue_size
         self.max_concurrent_runs = max_concurrent_runs
         self.idempotency_window = timedelta(minutes=idempotency_window_minutes)
         self.cleanup_interval_seconds = cleanup_interval_seconds
+        self.completion_callback = completion_callback
 
         # Queue and tracking
         self._pending_queue: List[RunRequest] = []
@@ -360,6 +364,14 @@ class RunDispatcher:
                 # Move to completed
                 self._completed_runs[run_id] = updated_result
                 del self._running_runs[run_id]
+
+                # Call completion callback if provided
+                if self.completion_callback:
+                    try:
+                        await self.completion_callback(updated_result)
+                    except Exception as e:
+                        logger.warning(f"Completion callback failed for run {run_id}: {e}")
+
                 return updated_result
             return self._running_runs[run_id]
 
@@ -393,11 +405,33 @@ class RunDispatcher:
         # Check pending queue
         for i, request in enumerate(self._pending_queue):
             if request.id == run_id:
+                cancelled_request = self._pending_queue[i]
                 del self._pending_queue[i]
                 heapq.heapify(self._pending_queue)
                 self._stats.current_queue_size = len(self._pending_queue)
                 self._stats.cancelled_runs += 1
                 logger.info(f"Cancelled pending run: {run_id}")
+
+                # Create cancelled run result and invoke completion callback to release locks
+                cancelled_result = RunResult(
+                    run_id=run_id,
+                    status=RunStatus.CANCELLED,
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                    metadata={
+                        **cancelled_request.metadata,  # Preserve original metadata including lock info
+                        "site_id": cancelled_request.site_id,
+                        "environment": cancelled_request.environment
+                    }
+                )
+
+                # Invoke completion callback to ensure locks are released
+                if self.completion_callback:
+                    try:
+                        await self.completion_callback(cancelled_result)
+                    except Exception as e:
+                        logger.error(f"Error in completion callback for cancelled run {run_id}: {e}")
+
                 return True
 
         # Check running runs
@@ -409,6 +443,14 @@ class RunDispatcher:
                 self._completed_runs[run_id] = result
                 del self._running_runs[run_id]
                 self._stats.cancelled_runs += 1
+
+                # Call completion callback for cancelled run if provided
+                if self.completion_callback:
+                    try:
+                        await self.completion_callback(result)
+                    except Exception as callback_e:
+                        logger.warning(f"Completion callback failed for cancelled run {run_id}: {callback_e}")
+
                 logger.info(f"Cancelled running run: {run_id}")
                 return True
 
@@ -502,12 +544,20 @@ class RunDispatcher:
                             started_at=datetime.now(timezone.utc),
                             completed_at=datetime.now(timezone.utc),
                             metadata={
+                                **run_request.metadata,
                                 "site_id": run_request.site_id,
                                 "environment": run_request.environment
                             }
                         )
                         self._completed_runs[run_request.id] = failed_result
                         self._stats.failed_runs += 1
+
+                        # Call completion callback for failed run if provided
+                        if self.completion_callback:
+                            try:
+                                await self.completion_callback(failed_result)
+                            except Exception as callback_e:
+                                logger.warning(f"Completion callback failed for failed run {run_request.id}: {callback_e}")
 
                         logger.error(f"Failed to dispatch run {run_request.id}: {e}")
 
@@ -518,6 +568,13 @@ class RunDispatcher:
                     if updated_result and updated_result.is_complete:
                         completed_run_ids.append(run_id)
                         self._completed_runs[run_id] = updated_result
+
+                        # Call completion callback if provided
+                        if self.completion_callback:
+                            try:
+                                await self.completion_callback(updated_result)
+                            except Exception as callback_e:
+                                logger.warning(f"Completion callback failed for run {run_id}: {callback_e}")
 
                         # Update statistics
                         if updated_result.status == RunStatus.COMPLETED:

@@ -204,7 +204,13 @@ class SchemaLoader:
     def clear_cache(self) -> None:
         """Clear schema and resolver caches."""
         self._schema_cache.clear()
-        self._resolver_cache.clear()
+
+        # Clear the appropriate resolver/registry cache based on what was initialized
+        if HAS_REFERENCING and hasattr(self, '_registry_cache'):
+            self._registry_cache.clear()
+        elif hasattr(self, '_resolver_cache'):
+            self._resolver_cache.clear()
+
         logger.debug("Schema cache cleared")
 
 
@@ -220,6 +226,18 @@ class Validator:
         self.config = config or SchemaConfig()
         self.schema_loader = SchemaLoader(config)
         self._validator_cache: Dict[str, Draft202012Validator] = {}
+        self.jsonschema = jsonschema  # Allow tests to mock this
+
+    def load_schema(self, schema_path: str | Path) -> Dict[str, Any]:
+        """Load schema from file path.
+
+        Args:
+            schema_path: Path to schema file
+
+        Returns:
+            Loaded schema dictionary
+        """
+        return self.schema_loader.load_schema(schema_path)
     
     def validate_data(
         self,
@@ -241,7 +259,7 @@ class Validator:
             logger.debug("Schema validation disabled")
             return []
         
-        if not HAS_JSONSCHEMA:
+        if not HAS_JSONSCHEMA or self.jsonschema is None:
             logger.warning("jsonschema library not available - skipping validation")
             return []
         
@@ -278,7 +296,27 @@ class Validator:
                 message=f"Schema validation error: {e}",
                 schema_rule="validation_error"
             )]
-    
+
+    def validate(
+        self,
+        data: Dict[str, Any],
+        schema: str | Path | Dict[str, Any] | None = None
+    ) -> List[ValidationIssue]:
+        """Validate data with optional schema.
+
+        Args:
+            data: Data to validate
+            schema: Optional schema (if None, returns empty list)
+
+        Returns:
+            List of validation issues
+        """
+        if schema is None:
+            return []
+
+        # Use a default page URL for backwards compatibility
+        return self.validate_data(data, schema, "https://example.com")
+
     @validate_types()
     def validate_snapshot(
         self,
@@ -345,11 +383,24 @@ class Validator:
         # Create resolver for references
         resolver = self.schema_loader.create_resolver(schema, schema_path)
         
-        # Create validator
-        if resolver:
-            validator = Draft202012Validator(schema, resolver=resolver)
-        else:
-            validator = Draft202012Validator(schema)
+        # Create validator with format checking enabled
+        try:
+            format_checker = self.jsonschema.FormatChecker() if self.jsonschema else None
+            if resolver:
+                # Detect if resolver is a Registry (modern) or RefResolver (legacy)
+                if HAS_REFERENCING and hasattr(resolver, 'contents'):
+                    # Modern Registry - pass as registry parameter
+                    validator = Draft202012Validator(schema, registry=resolver, format_checker=format_checker)
+                else:
+                    # Legacy RefResolver - pass as resolver parameter
+                    validator = Draft202012Validator(schema, resolver=resolver, format_checker=format_checker)
+            else:
+                validator = Draft202012Validator(schema, format_checker=format_checker)
+        except Exception as e:
+            # Fall back to validator without resolver if reference resolution fails
+            logger.warning(f"Failed to create validator with resolver: {e}, falling back to basic validator")
+            format_checker = self.jsonschema.FormatChecker() if self.jsonschema else None
+            validator = Draft202012Validator(schema, format_checker=format_checker)
         
         # Cache validator with size limit
         if len(self._validator_cache) > 100:  # Limit cache size

@@ -1,0 +1,51 @@
+# Example OpenAudit Configuration File
+# This demonstrates the configuration file format for Tag Sentinel CLI
+
+# Default environment
+environment: staging
+
+# Input configuration
+input:
+  # Default URLs to audit (can be overridden by CLI)
+  urls:
+    - "https://example.com"
+    - "https://staging.example.com"
+
+# Execution settings
+execution:
+  timeout_seconds: 45.0
+  max_concurrency: 5
+  max_pages: 1000
+  fail_fast: false
+
+# Rule evaluation settings
+rules:
+  # Default rules file (commented out for demo)
+  # rules_file: "config/rules.yaml"
+  scenario_id: "default"
+  severity_threshold: "warning"
+  exit_on_critical: true
+  exit_on_warnings: false
+
+# Output configuration
+output:
+  format: "yaml"
+  verbose: true
+  quiet: false
+
+# Execution settings
+execution:
+  fail_fast: true
+
+# Debug settings (for development)
+debug:
+  headful: false
+  devtools: false
+  har: false
+  screenshots: "on_error"
+  trace: false
+
+# Alert settings
+alerts:
+  enable_alerts: false
+  # alert_config_path: "config/alerts.yaml"

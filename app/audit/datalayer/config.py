@@ -45,18 +45,18 @@ class SchemaConfig(BaseModel):
     severity_mapping: Dict[str, ValidationSeverity] = Field(
         default_factory=lambda: {
             "required": ValidationSeverity.CRITICAL,
-            "type": ValidationSeverity.WARNING, 
-            "format": ValidationSeverity.WARNING,
-            "enum": ValidationSeverity.WARNING,
-            "pattern": ValidationSeverity.WARNING,
-            "minimum": ValidationSeverity.WARNING,
-            "maximum": ValidationSeverity.WARNING,
-            "minLength": ValidationSeverity.WARNING,
-            "maxLength": ValidationSeverity.WARNING,
-            "uniqueItems": ValidationSeverity.WARNING,
+            "type": ValidationSeverity.CRITICAL,
+            "format": ValidationSeverity.CRITICAL,
+            "enum": ValidationSeverity.CRITICAL,
+            "pattern": ValidationSeverity.CRITICAL,
+            "minimum": ValidationSeverity.CRITICAL,
+            "maximum": ValidationSeverity.CRITICAL,
+            "minLength": ValidationSeverity.CRITICAL,
+            "maxLength": ValidationSeverity.CRITICAL,
+            "uniqueItems": ValidationSeverity.CRITICAL,
             "additionalProperties": ValidationSeverity.INFO,
-            "dependencies": ValidationSeverity.WARNING,
-            "if": ValidationSeverity.WARNING
+            "dependencies": ValidationSeverity.CRITICAL,
+            "if": ValidationSeverity.CRITICAL
         },
         description="Mapping of JSON Schema keywords to severity levels"
     )
@@ -374,6 +374,16 @@ class DataLayerConfig(BaseModel):
             raise ValueError(f"Environment must be one of: {allowed_envs}")
         return v
     
+    @property
+    def event_detection_patterns(self) -> List[str]:
+        """Get event detection patterns from capture config."""
+        return self.capture.event_detection_patterns
+
+    @event_detection_patterns.setter
+    def event_detection_patterns(self, value: List[str]) -> None:
+        """Set event detection patterns in capture config."""
+        self.capture.event_detection_patterns = value
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""

@@ -735,24 +735,28 @@ class CaptureEngine:
 
 def create_capture_engine(
     headless: bool = True,
+    devtools: bool = False,
     max_concurrent_pages: int = 5,
     enable_artifacts: bool = False,
     artifacts_dir: Optional[Path] = None,
     **kwargs
 ) -> CaptureEngine:
     """Create capture engine with common configuration.
-    
+
     Args:
         headless: Run browser in headless mode
+        devtools: Open DevTools automatically (forces headless=False)
         max_concurrent_pages: Maximum concurrent page captures
         enable_artifacts: Enable artifact generation
         artifacts_dir: Directory for artifacts
         **kwargs: Additional configuration options
-        
+
     Returns:
         Configured CaptureEngine instance
     """
-    browser_config = BrowserConfig(headless=headless)
+    # DevTools requires headless=False
+    effective_headless = headless and not devtools
+    browser_config = BrowserConfig(headless=effective_headless, devtools=devtools)
     
     engine_config = CaptureEngineConfig(
         browser_config=browser_config,

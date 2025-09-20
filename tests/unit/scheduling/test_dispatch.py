@@ -38,7 +38,10 @@ class MockAuditBackend:
             run_id=run_request.id,
             status=RunStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
-            metadata={"mock": True}
+            metadata={
+                **run_request.metadata,  # Preserve original metadata including lock info
+                "mock": True
+            }
         )
         self.dispatched_runs[run_request.id] = result
         return result
@@ -179,8 +182,8 @@ class TestRunDispatcher:
         # Start dispatcher to process
         await dispatcher.start()
 
-        # Wait for processing
-        await asyncio.sleep(0.2)
+        # Wait for processing (dispatcher loop sleeps for 1 second)
+        await asyncio.sleep(3.0)
 
         # High priority should have been processed first
         stats = dispatcher.get_stats()
@@ -199,8 +202,8 @@ class TestRunDispatcher:
         enqueued = await dispatcher.enqueue_run(run_request)
         assert enqueued is True
 
-        # Wait for dispatch
-        await asyncio.sleep(0.1)
+        # Wait for dispatch (dispatcher loop sleeps for 1 second)
+        await asyncio.sleep(1.2)
 
         # Should be able to get result
         result = await dispatcher.get_run_result(run_request.id)
@@ -224,6 +227,12 @@ class TestRunDispatcher:
                 scheduled_at=datetime.now(timezone.utc)
             )
             await dispatcher.enqueue_run(run_request)
+
+        # Start dispatcher to process runs
+        await dispatcher.start()
+
+        # Wait for processing (dispatcher loop sleeps for 1 second)
+        await asyncio.sleep(1.2)
 
         # Check updated stats
         stats = dispatcher.get_stats()
@@ -397,8 +406,8 @@ class TestDispatcherConfiguration:
                 enqueued = await dispatcher.enqueue_run(run_request)
                 assert enqueued is True
 
-            # Wait a moment
-            await asyncio.sleep(0.1)
+            # Wait for processing (dispatcher loop sleeps for 1 second)
+            await asyncio.sleep(1.2)
 
             # Should have limited concurrent dispatches
             stats = dispatcher.get_stats()

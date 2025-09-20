@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Test DataLayer Schema",
+  "description": "Simple test schema for DataLayer validation tests",
+  "type": "object",
+  "properties": {
+    "page": {
+      "type": "string",
+      "description": "Page identifier"
+    },
+    "user_id": {
+      "type": "string",
+      "description": "User identifier"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "User email address"
+    },
+    "event": {
+      "type": "string",
+      "description": "Event name"
+    }
+  },
+  "additionalProperties": true
+}

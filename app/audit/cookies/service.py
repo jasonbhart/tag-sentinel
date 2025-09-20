@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any, Union
 
 from playwright.async_api import Browser, BrowserContext
 
-from .models import PrivacyAnalysisResult, ScenarioCookieReport, CookieDiff
+from .models import PrivacyAnalysisResult, ScenarioCookieReport, CookieDiff, PolicySeverity
 from .config import PrivacyConfiguration, get_privacy_config
 from .orchestration import ScenarioOrchestrator, execute_privacy_scenarios
 from .comparison import ScenarioComparator
@@ -315,7 +315,7 @@ class CookieConsentService:
             # Find critical policy violations
             critical_violations = [
                 issue for issue in report.policy_issues
-                if issue.severity == 'critical'
+                if issue.severity == PolicySeverity.CRITICAL
             ]
             
             for violation in critical_violations:
@@ -498,10 +498,11 @@ class CookieConsentService:
         for page_url in page_urls:
             try:
                 result = await self.analyze_page_privacy(
-                    page_url, 
-                    compliance_framework,
-                    parallel_execution,
-                    include_performance_metrics
+                    page_url,
+                    page_title=None,
+                    compliance_framework=compliance_framework,
+                    parallel_execution=parallel_execution,
+                    include_performance_metrics=include_performance_metrics
                 )
                 results.append(result)
                 logger.debug(f"Completed analysis for: {page_url}")
@@ -545,9 +546,10 @@ class CookieConsentService:
             async with semaphore:
                 try:
                     return await self.analyze_page_privacy(
-                        url, 
-                        compliance_framework,
-                        parallel_execution,
+                        url,
+                        page_title=None,
+                        compliance_framework=compliance_framework,
+                        parallel_execution=parallel_execution,
                         include_performance_metrics=False  # Skip metrics for batch to improve performance
                     )
                 except Exception as e:
@@ -612,7 +614,12 @@ async def analyze_page_privacy(
     """
     service = CookieConsentService(browser, config, artifacts_dir)
     try:
-        return await service.analyze_page_privacy(page_url, compliance_framework, parallel_execution)
+        return await service.analyze_page_privacy(
+            page_url,
+            page_title=page_title,
+            compliance_framework=compliance_framework,
+            parallel_execution=parallel_execution
+        )
     finally:
         # Handle cleanup gracefully
         cleanup_method = getattr(service, 'cleanup', None)

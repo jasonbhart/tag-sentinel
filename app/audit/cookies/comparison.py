@@ -50,20 +50,20 @@ class ScenarioComparator:
         return f"{cookie.name}@{cookie.domain}{cookie.path}"
     
     def compare_scenarios(
-        self, 
+        self,
         baseline_report: ScenarioCookieReport,
         variant_report: ScenarioCookieReport
     ) -> CookieDiff:
         """Compare two scenario reports and generate detailed diff.
-        
+
         Args:
             baseline_report: Baseline scenario report
             variant_report: Variant scenario report
-            
+
         Returns:
             Detailed cookie difference analysis
         """
-        comparison_key = f"{baseline_report.scenario_id}_vs_{variant_report.scenario_id}"
+        comparison_key = f"{baseline_report.scenario_id}_vs_{variant_report.scenario_id}_{baseline_report.page_url}"
         
         if comparison_key in self.comparison_cache:
             return self.comparison_cache[comparison_key]

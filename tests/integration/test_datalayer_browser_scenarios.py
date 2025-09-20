@@ -62,9 +62,16 @@ class TestSinglePageApplicationScenarios:
         for scenario in spa_scenarios:
             mock_page = AsyncMock()
             mock_page.url = f"https://spa-example.com{scenario['route']}"
-            mock_page.evaluate.return_value = scenario['datalayer']
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario['datalayer'],
+                'events': scenario.get('events', []),
+                'truncated': False
+            }
             
             context = DLContext(
+                env='test',
                 url=f"https://spa-example.com{scenario['route']}",
                 page_title=scenario['datalayer']['page']['title']
             )
@@ -110,13 +117,25 @@ class TestSinglePageApplicationScenarios:
         # Test initial capture
         mock_page = AsyncMock()
         mock_page.url = "https://example.com/dynamic"
-        mock_page.evaluate.return_value = initial_datalayer
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': initial_datalayer,
+            'events': [],
+            'truncated': False
+        }
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://example.com/dynamic"})
         initial_result = await integration_service.capture_and_validate(mock_page, context)
         
         # Test updated capture (simulating later capture)
-        mock_page.evaluate.return_value = updated_datalayer
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': updated_datalayer,
+            'events': [],
+            'truncated': False
+        }
         updated_result = await integration_service.capture_and_validate(mock_page, context)
         
         # Verify both captures successful
@@ -232,9 +251,15 @@ class TestEcommerceScenarios:
         for step in funnel_steps:
             mock_page = AsyncMock()
             mock_page.url = step["url"]
-            mock_page.evaluate.return_value = step["datalayer"]
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': step["datalayer"],
+                'events': [],
+                'truncated': False
+            }
             
-            context = DLContext(url=step["url"])
+            context = DLContext(env='test')
             result = await integration_service.capture_and_validate(
                 mock_page, context, ecommerce_schema
             )
@@ -313,7 +338,13 @@ class TestEcommerceScenarios:
         
         mock_page = AsyncMock()
         mock_page.url = "https://shop.example.com/checkout/success"
-        mock_page.evaluate.return_value = enhanced_ecommerce_data
+        mock_page.evaluate.return_value = {
+            'exists': True,
+            'objectName': 'dataLayer',
+            'latest': enhanced_ecommerce_data,
+            'events': [],
+            'truncated': False
+        }
         
         context = DLContext(env="test", data_layer_object="dataLayer", max_depth=6, max_entries=500, site_config={"url": "https://shop.example.com/checkout/success"})
         result = await integration_service.capture_and_validate(mock_page, context)
@@ -378,9 +409,15 @@ class TestErrorRecoveryScenarios:
                 data = scenario['datalayer']
                 data['metadata']['self_reference'] = data  # Create circular reference
                 
-            mock_page.evaluate.return_value = scenario['datalayer']
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario['datalayer'],
+                'events': [],
+                'truncated': False
+            }
             
-            context = DLContext(url=f"https://example.com/{scenario['name']}")
+            context = DLContext(env='test')
             result = await integration_service.capture_and_validate(mock_page, context)
             results.append((scenario['name'], result))
         
@@ -437,7 +474,7 @@ class TestErrorRecoveryScenarios:
             elif "responses" in scenario:
                 mock_page.evaluate.side_effect = scenario["responses"]
             
-            context = DLContext(url=f"https://example.com/{scenario['name']}")
+            context = DLContext(env='test')
             result = await integration_service.capture_and_validate(mock_page, context)
             results.append((scenario['name'], result))
         
@@ -482,9 +519,15 @@ class TestErrorRecoveryScenarios:
         for scenario in large_data_scenarios:
             mock_page = AsyncMock()
             mock_page.url = f"https://example.com/{scenario['name']}"
-            mock_page.evaluate.return_value = scenario['datalayer']
+            mock_page.evaluate.return_value = {
+                'exists': True,
+                'objectName': 'dataLayer',
+                'latest': scenario['datalayer'],
+                'events': [],
+                'truncated': False
+            }
             
-            context = DLContext(url=f"https://example.com/{scenario['name']}")
+            context = DLContext(env='test')
             
             # Monitor processing time
             import time

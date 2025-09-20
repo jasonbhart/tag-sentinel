@@ -174,15 +174,18 @@ class DataLayerSnapshot(BaseModel):
         return _extract_keys(self.latest)
     
     def get_event_types(self) -> List[str]:
-        """Get list of unique event types/names."""
+        """Get list of unique event types/names using the standard fallback chain."""
         event_types = set()
         for event in self.events:
-            if 'event' in event:
-                event_types.add(event['event'])
-            elif 'eventName' in event:
-                event_types.add(event['eventName'])
-            elif 'type' in event:
-                event_types.add(event['type'])
+            # Use the same fallback chain as individual event type detection
+            event_type = (
+                event.get('event') or
+                event.get('eventName') or
+                event.get('eventAction') or
+                event.get('type') or
+                'unknown'
+            )
+            event_types.add(event_type)
         return list(event_types)
 
 
@@ -543,24 +546,36 @@ class DLAggregate(BaseModel):
                     if len(var_presence.example_values) < 3:
                         var_presence.example_values.append(value)
         
-        # Track events
+        # Track events - each event should only update its own type
+        page_event_types_seen = set()
         for event in result.snapshot.events:
-            event_types = result.snapshot.get_event_types()
-            for event_type in event_types:
-                if event_type not in self.events:
-                    self.events[event_type] = EventFrequency(
-                        event_type=event_type,
-                        total_pages=self.total_pages
-                    )
-                
-                event_freq = self.events[event_type]
-                event_freq.total_occurrences += 1
+            # Use the same fallback chain as DataAggregator for consistency
+            event_type = (
+                event.get('event') or
+                event.get('eventName') or
+                event.get('eventAction') or
+                event.get('type') or
+                'unknown'
+            )
+
+            if event_type not in self.events:
+                self.events[event_type] = EventFrequency(
+                    event_type=event_type,
+                    total_pages=self.total_pages
+                )
+
+            event_freq = self.events[event_type]
+            event_freq.total_occurrences += 1
+            event_freq.total_pages = self.total_pages
+
+            # Track that this page has this event type (only count once per page)
+            if event_type not in page_event_types_seen:
                 event_freq.pages_with_event += 1
-                event_freq.total_pages = self.total_pages
-                
-                # Keep up to 3 example events
-                if len(event_freq.example_events) < 3:
-                    event_freq.example_events.append(event)
+                page_event_types_seen.add(event_type)
+
+            # Keep up to 3 example events
+            if len(event_freq.example_events) < 3:
+                event_freq.example_events.append(event)
     
     def _get_nested_value(self, obj: Dict[str, Any], path: str) -> Any:
         """Get value from nested object using dot notation path."""

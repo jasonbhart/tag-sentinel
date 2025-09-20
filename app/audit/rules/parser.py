@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from urllib.parse import urlparse
 from copy import deepcopy
 
-from .models import Rule, CheckConfig, AppliesTo, Severity, CheckType
+from .models import Rule, CheckConfig, AppliesTo, Severity, CheckType, RuleScope
 from .schema import validate_rules_config, validate_rules_file, ValidationResult
 
 
@@ -370,10 +370,12 @@ class RuleParser:
                 raise ParseError(f"Invalid URL regex pattern '{pattern}' in rule '{rule_id}'")
         
         return AppliesTo(
+            scope=config.get('scope', RuleScope.PAGE),
             environments=config.get('environments', []),
             scenario_ids=config.get('scenario_ids', []),
             url_include=url_include,
             url_exclude=url_exclude,
+            urls=config.get('urls', []),
             vendors=config.get('vendors', [])
         )
     
@@ -409,16 +411,40 @@ class RuleParser:
         if url_pattern:
             self.regex_compiler.compile_pattern(url_pattern)
         
-        return CheckConfig(
-            type=check_type,
-            vendor=normalized_config.get('vendor'),
-            url_pattern=url_pattern,
-            min_count=normalized_config.get('min_count'),
-            max_count=normalized_config.get('max_count'),
-            time_window_ms=normalized_config.get('time_window_ms'),
-            expression=normalized_config.get('expression'),
-            config=normalized_config.get('config', {})
-        )
+        # Preserve all check-specific configuration fields
+        # Remove CheckConfig built-in fields to avoid duplication
+        config_fields = {k: v for k, v in normalized_config.items()
+                        if k not in {'type', 'vendor', 'url_pattern', 'min_count', 'max_count',
+                                   'time_window_ms', 'expression', 'timeout_seconds', 'retry_count', 'enabled'}}
+
+        # Build CheckConfig arguments, only including non-None values to preserve defaults
+        check_config_args = {
+            'type': check_type,
+            'parameters': config.get('parameters', {}),  # Preserve original parameters
+            'config': config_fields  # Include all other check-specific fields
+        }
+
+        # Only add optional fields if they have values
+        if normalized_config.get('vendor') is not None:
+            check_config_args['vendor'] = normalized_config['vendor']
+        if url_pattern is not None:
+            check_config_args['url_pattern'] = url_pattern
+        if normalized_config.get('min_count') is not None:
+            check_config_args['min_count'] = normalized_config['min_count']
+        if normalized_config.get('max_count') is not None:
+            check_config_args['max_count'] = normalized_config['max_count']
+        if normalized_config.get('time_window_ms') is not None:
+            check_config_args['time_window_ms'] = normalized_config['time_window_ms']
+        if normalized_config.get('timeout_seconds') is not None:
+            check_config_args['timeout_seconds'] = normalized_config['timeout_seconds']
+        if normalized_config.get('retry_count') is not None:
+            check_config_args['retry_count'] = normalized_config['retry_count']
+        if normalized_config.get('enabled') is not None:
+            check_config_args['enabled'] = normalized_config['enabled']
+        if normalized_config.get('expression') is not None:
+            check_config_args['expression'] = normalized_config['expression']
+
+        return CheckConfig(**check_config_args)
     
     def get_parsed_config(self) -> Optional[Dict[str, Any]]:
         """Get the last parsed configuration dictionary.

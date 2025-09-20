@@ -202,7 +202,7 @@ async def test_basic_crawler():
     metrics = crawler.get_metrics()
     assert metrics.config == config
     assert metrics.is_running == False
-    assert metrics.stats.urls_processed == 0
+    assert metrics.stats.urls_emitted == 0
     print("✓ Metrics initialization works")
     
     # Test scope matcher initialization

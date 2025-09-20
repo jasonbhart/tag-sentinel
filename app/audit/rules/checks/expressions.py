@@ -316,7 +316,8 @@ class ExpressionCheck(BaseCheck):
         self.evaluator = SafeExpressionEvaluator()
         self.jsonpath = SimpleJSONPath()
     
-    def get_supported_config_keys(self) -> List[str]:
+    @classmethod
+    def get_supported_config_keys(cls) -> List[str]:
         return [
             'expression',
             'data_context',

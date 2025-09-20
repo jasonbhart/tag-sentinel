@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from .models import DataLayerSnapshot, DLContext
-from .config import CaptureConfig
+from .config import CaptureConfig, DataLayerConfig
 from .runtime_validation import validate_types, validate_dl_context, validate_datalayer_snapshot
 
 logger = logging.getLogger(__name__)
@@ -29,13 +29,18 @@ class SnapshotError(Exception):
 class Snapshotter:
     """Captures dataLayer snapshots from browser pages with safety measures."""
     
-    def __init__(self, config: CaptureConfig | None = None):
+    def __init__(self, config: CaptureConfig | DataLayerConfig | None = None):
         """Initialize snapshotter with configuration.
-        
+
         Args:
-            config: Capture configuration settings
+            config: Capture configuration settings or full DataLayer configuration
         """
-        self.config = config or CaptureConfig()
+        if config is None:
+            self.config = CaptureConfig()
+        elif isinstance(config, DataLayerConfig):
+            self.config = config.capture
+        else:
+            self.config = config
         self._capture_script = self._build_capture_script()
     
     @validate_types()
@@ -332,24 +337,39 @@ class Snapshotter:
     
     def _is_event_push(self, push: Dict[str, Any]) -> bool:
         """Enhanced event detection with multiple strategies.
-        
+
         Detects events using:
         1. Standard GTM patterns (event, eventName, etc.)
         2. Ecommerce patterns (purchase, add_to_cart, etc.)
         3. Custom event indicators
         4. Functional patterns (functions, callbacks)
-        
+
         Args:
             push: Push object to analyze
-            
+
         Returns:
             True if this push represents an event
         """
+        # First, exclude GTM internal variables that are NOT events
+        gtm_non_event_patterns = [
+            'gtm.start', 'gtm.load', 'gtm.dom', 'gtm.init', 'gtm.js',
+            'gtm.config', 'gtm.uniqueEventId'
+        ]
+
+        # Check for GTM internal patterns as keys
+        if len(push) == 1 and any(key in gtm_non_event_patterns for key in push.keys()):
+            return False
+
+        # Check for GTM internal patterns as values (e.g., {'event': 'gtm.js'})
+        if 'event' in push and isinstance(push['event'], str):
+            if any(push['event'] == pattern for pattern in gtm_non_event_patterns):
+                return False
+
         # Strategy 1: Standard event patterns
         for pattern in self.config.event_detection_patterns:
             if pattern in push:
                 return True
-        
+
         # Strategy 2: GTM ecommerce event patterns
         ecommerce_indicators = [
             'ecommerce', 'purchase', 'add_to_cart', 'remove_from_cart',
@@ -358,25 +378,29 @@ class Snapshotter:
         ]
         if any(indicator in push for indicator in ecommerce_indicators):
             return True
-        
+
         # Strategy 3: Custom event patterns
         custom_event_patterns = [
-            'gtm.', '_event', 'eventAction', 'eventCategory', 'eventLabel',
+            '_event', 'eventAction', 'eventCategory', 'eventLabel',
             'customEvent', 'trackingEvent'
         ]
         for pattern in custom_event_patterns:
             if any(key.startswith(pattern) for key in push.keys()):
                 return True
-        
-        # Strategy 4: Functional patterns (GTM functions)
-        if 'gtm.element' in push or 'gtm.elementId' in push or 'gtm.elementClasses' in push:
+
+        # Strategy 4: Functional patterns (GTM event functions - not internal vars)
+        gtm_event_patterns = [
+            'gtm.element', 'gtm.elementId', 'gtm.elementClasses',
+            'gtm.click', 'gtm.formSubmit', 'gtm.scrollDepth', 'gtm.timer'
+        ]
+        if any(key in gtm_event_patterns for key in push.keys()):
             return True
-        
+
         # Strategy 5: Event value patterns (one-time data)
         event_value_patterns = ['value', 'revenue', 'currency', 'items', 'products']
         if len(push) == 1 and any(key in event_value_patterns for key in push.keys()):
             return True
-        
+
         return False
     
     def _process_event_push(self, push: Dict[str, Any], index: int, current_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -433,9 +457,8 @@ class Snapshotter:
             # Process each key-value pair in push
             for key, value in push.items():
                 if key.startswith('_') or key.startswith('gtm.'):
-                    # Skip internal GTM variables unless explicitly configured
-                    if not self.config.global_settings.get('capture_gtm_internals', False):
-                        continue
+                    # Skip internal GTM variables (CaptureConfig doesn't have global_settings)
+                    continue
                 
                 self._merge_variable_value(latest_state, key, value, index)
                 
@@ -588,7 +611,212 @@ class Snapshotter:
             event['_gtm_context'] = {key: event[key] for key in gtm_keys}
         
         return event
-    
+
+    def _is_datalayer_array(self, obj: Any) -> bool:
+        """Check if object is a dataLayer array (GTM style).
+
+        Args:
+            obj: Object to check
+
+        Returns:
+            True if object is a dataLayer array
+        """
+        return isinstance(obj, list)
+
+    def _extract_events_from_array(self, array: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Extract events and variables from GTM-style dataLayer array.
+
+        Args:
+            array: GTM-style dataLayer array
+
+        Returns:
+            Tuple of (events, merged_variables)
+        """
+        if not isinstance(array, list):
+            return [], {}
+
+        events = []
+        variable_pushes = []
+
+        for push in array:
+            if not isinstance(push, dict):
+                continue
+
+            if self._is_event_push(push):
+                events.append(push)
+            else:
+                variable_pushes.append(push)
+
+        # Merge variables
+        merged_variables = self._merge_variables(variable_pushes)
+
+        return events, merged_variables
+
+    def _merge_variables(self, variable_pushes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge variable pushes into a single state object.
+
+        Args:
+            variable_pushes: List of variable push objects
+
+        Returns:
+            Merged variables state
+        """
+        merged = {}
+
+        for push in variable_pushes:
+            if not isinstance(push, dict):
+                continue
+
+            # Skip GTM internal variables by default (CaptureConfig doesn't have global_settings)
+            filtered_push = {
+                k: v for k, v in push.items()
+                if not k.startswith('gtm.')
+            }
+
+            # Simple merge (later values override earlier ones)
+            merged.update(filtered_push)
+
+        return merged
+
+    def _process_gtm_array(self, gtm_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Process GTM-style array data and return normalized structure.
+
+        Args:
+            gtm_data: GTM-style dataLayer array
+
+        Returns:
+            Normalized structure with variables and events
+        """
+        events, variables = self._extract_events_from_array(gtm_data)
+        return {
+            "variables": variables,
+            "events": events
+        }
+
+    def _process_object_datalayer(self, object_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process object-style dataLayer and return normalized structure.
+
+        Args:
+            object_data: Object-style dataLayer
+
+        Returns:
+            The object data (potentially with depth limiting applied)
+        """
+        # For object-style dataLayers, return as-is
+        # In a real implementation, this might apply depth limiting or other processing
+        return object_data
+
+    def _safe_json_serialize(self, obj: Any) -> Any:
+        """Safely serialize object to JSON-compatible format.
+
+        Args:
+            obj: Object to serialize
+
+        Returns:
+            JSON-compatible version of the object
+        """
+        try:
+            # Use the existing safe cloning logic from the capture script
+            # This handles circular references, size limits, etc.
+            context = {
+                'entries_count': 0,
+                'estimated_size': 0,
+                'max_size': self.config.max_size_bytes
+            }
+            result = self._safe_clone_python(obj, 0, self.config.max_depth, context)
+
+            # Double-check final size
+            try:
+                final_size = len(json.dumps(result, default=str))
+                if final_size > self.config.max_size_bytes:
+                    # If still too large, return a truncated version
+                    return {'[TRUNCATED_SIZE]': f'Object too large ({final_size} bytes)'}
+            except Exception:
+                pass
+
+            return result
+        except Exception as e:
+            logger.warning(f"Safe JSON serialization failed: {e}")
+            return None
+
+    def _safe_clone_python(self, obj: Any, depth: int = 0, max_depth: int = 10, context: Dict[str, Any] = None) -> Any:
+        """Python version of the safe cloning logic from JavaScript.
+
+        Args:
+            obj: Object to clone
+            depth: Current depth
+            max_depth: Maximum depth to traverse
+            context: Context with counters and limits
+
+        Returns:
+            Safely cloned object
+        """
+        if context is None:
+            context = {'entries_count': 0, 'estimated_size': 0, 'max_size': self.config.max_size_bytes}
+
+        # Prevent infinite recursion
+        if depth > max_depth or context['entries_count'] > self.config.max_entries:
+            return '[TRUNCATED_DEPTH]'
+
+        # Check estimated size
+        if context['estimated_size'] > context['max_size']:
+            return '[TRUNCATED_SIZE]'
+
+        # Handle None/primitives
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            # Estimate size for primitives
+            context['estimated_size'] += len(str(obj))
+            return obj
+
+        # Handle lists
+        if isinstance(obj, list):
+            context['entries_count'] += 1
+            result = []
+            for i, item in enumerate(obj):
+                if context['entries_count'] >= self.config.max_entries or context['estimated_size'] >= context['max_size']:
+                    result.append('[TRUNCATED_ARRAY]')
+                    break
+                result.append(self._safe_clone_python(item, depth + 1, max_depth, context))
+            return result
+
+        # Handle dictionaries
+        if isinstance(obj, dict):
+            context['entries_count'] += 1
+            result = {}
+
+            # Handle circular references by using a seen set
+            # Note: This is a simplified approach - the JS version is more sophisticated
+            try:
+                for key, value in obj.items():
+                    if context['entries_count'] >= self.config.max_entries or context['estimated_size'] >= context['max_size']:
+                        result['[TRUNCATED_ENTRIES]'] = True
+                        break
+
+                    # Estimate size for key
+                    context['estimated_size'] += len(str(key))
+
+                    # Skip functions and other non-serializable objects
+                    if callable(value):
+                        result[key] = '[FUNCTION]'
+                        context['estimated_size'] += 10  # Estimate for '[FUNCTION]'
+                        continue
+
+                    result[key] = self._safe_clone_python(value, depth + 1, max_depth, context)
+
+            except Exception as e:
+                return f'[OBJECT_ERROR: {e}]'
+
+            return result
+
+        # Handle other types
+        try:
+            str_repr = str(obj)
+            context['estimated_size'] += len(str_repr)
+            return str_repr
+        except Exception:
+            context['estimated_size'] += 15  # Estimate for '[UNSERIALIZABLE]'
+            return '[UNSERIALIZABLE]'
+
     def _handle_clear_operation(self, state: Dict[str, Any], push: Dict[str, Any]) -> None:
         """Handle GTM clear operations.
         
@@ -1089,6 +1317,54 @@ class Snapshotter:
             }
         })
         """
+
+    def _create_snapshot(
+        self,
+        url: str,
+        raw_data: Any,
+        processed_data: Any,
+        events: Optional[List[Dict[str, Any]]] = None,
+        error: Optional[str] = None
+    ) -> DataLayerSnapshot:
+        """Create a DataLayerSnapshot from captured data.
+
+        Args:
+            url: Page URL where data was captured
+            raw_data: Raw dataLayer data as captured
+            processed_data: Normalized/processed data
+            events: Extracted events (optional)
+            error: Error message if capture failed (optional)
+
+        Returns:
+            DataLayerSnapshot instance
+        """
+        # Calculate snapshot properties
+        # exists = whether the dataLayer object was found (not whether it has content)
+        # An empty dataLayer is still an existing dataLayer
+        exists = error is None and raw_data is not None
+
+        # Calculate entries captured
+        entries_captured = 0
+        if isinstance(processed_data, dict):
+            entries_captured = len(processed_data)
+        elif isinstance(processed_data, list):
+            entries_captured = len(processed_data)
+
+        return DataLayerSnapshot(
+            page_url=url,
+            exists=exists,
+            latest=processed_data if isinstance(processed_data, dict) else {},
+            events=events or [],
+            entries_captured=entries_captured
+        )
+
+    def _get_datalayer_capture_js(self) -> str:
+        """Get the JavaScript code for dataLayer capture.
+
+        Returns:
+            JavaScript code string for capturing dataLayer
+        """
+        return self._capture_script
 
 
 class BatchSnapshotter:

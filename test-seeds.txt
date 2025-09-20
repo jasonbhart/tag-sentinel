@@ -1,0 +1,8 @@
+# Test seeds file
+# Comments start with #
+
+https://httpbin.org/get
+https://httpbin.org/json
+
+# Another comment
+https://httpbin.org/headers

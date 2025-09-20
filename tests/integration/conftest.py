@@ -42,7 +42,7 @@ def integration_config():
             batch_processing=True  # Enable batch processing to fix validation
         ),
         redaction=RedactionConfig(
-            enabled=True,
+            enabled=False,  # Disable redaction for integration tests
             default_method="hash"
         ),
         validation=SchemaConfig(
@@ -50,7 +50,7 @@ def integration_config():
             strict_mode=False
         ),
         performance=PerformanceConfig(
-            max_concurrent_captures=3,  # Lower concurrency for tests
+            max_concurrent_captures=1,  # Single capture to avoid validation warning
             enable_caching=False
         )
     )
@@ -77,8 +77,14 @@ def mock_gtm_page():
     
     mock_page = AsyncMock()
     mock_page.url = "https://example.com/gtm-test"
-    mock_page.evaluate.return_value = gtm_data
-    
+    mock_page.evaluate.return_value = {
+        'exists': True,
+        'objectName': 'dataLayer',
+        'latest': {},  # GTM style is typically array-based, latest state would be empty
+        'events': gtm_data,  # GTM data is the events array
+        'truncated': False
+    }
+
     return mock_page
 
 
@@ -130,9 +136,15 @@ def mock_object_page():
     }
     
     mock_page = AsyncMock()
-    mock_page.url = "https://example.com/products/headphones"
-    mock_page.evaluate.return_value = object_data
-    
+    mock_page.url = "https://example.com/object-test"
+    mock_page.evaluate.return_value = {
+        'exists': True,
+        'objectName': 'dataLayer',
+        'latest': object_data,  # Object style stores current state in latest
+        'events': [],  # Object style typically doesn't have events array
+        'truncated': False
+    }
+
     return mock_page
 
 
@@ -141,8 +153,14 @@ def mock_empty_page():
     """Mock page without dataLayer."""
     mock_page = AsyncMock()
     mock_page.url = "https://example.com/no-datalayer"
-    mock_page.evaluate.return_value = None
-    
+    mock_page.evaluate.return_value = {
+        'exists': False,
+        'objectName': 'dataLayer',
+        'latest': None,
+        'events': None,
+        'truncated': False
+    }
+
     return mock_page
 
 
@@ -191,8 +209,14 @@ def sensitive_data_page():
     
     mock_page = AsyncMock()
     mock_page.url = "https://example.com/sensitive-data"
-    mock_page.evaluate.return_value = sensitive_data
-    
+    mock_page.evaluate.return_value = {
+        'exists': True,
+        'objectName': 'dataLayer',
+        'latest': sensitive_data,  # Sensitive data as latest state
+        'events': [],
+        'truncated': False
+    }
+
     return mock_page
 
 

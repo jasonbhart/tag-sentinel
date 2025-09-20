@@ -65,7 +65,7 @@ class EvaluationMetrics(BaseModel):
 @dataclass
 class EvaluationContext:
     """Context for rule evaluation execution."""
-    
+
     indexes: AuditIndexes
     query: AuditQuery
     environment: Optional[str] = None
@@ -73,13 +73,16 @@ class EvaluationContext:
     debug: bool = False
     timeout_seconds: int = 300
     max_workers: Optional[int] = None
-    
+
+    # Scenario context
+    scenario_id: Optional[str] = None
+
     # Evaluation options
     fail_fast: bool = False
     include_passed: bool = True
     severity_filter: Optional[Set[Severity]] = None
     rule_tag_filter: Optional[Set[str]] = None
-    
+
     # Performance tracking
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -313,7 +316,13 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
                 rule_tags = set(rule.tags or [])
                 if not rule_tags.intersection(context.rule_tag_filter):
                     continue
-            
+
+            # Check scenario filter
+            if rule.applies_to.scenario_ids:
+                # Check if current scenario matches any of the allowed scenarios
+                if not context.scenario_id or context.scenario_id not in rule.applies_to.scenario_ids:
+                    continue
+
             filtered.append(rule)
         
         return filtered
@@ -587,17 +596,34 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
     def _rule_applies(self, rule: Rule, context: EvaluationContext) -> bool:
         """Check if rule applies to current evaluation context."""
         applies_to = rule.applies_to
-        
+
+        # Check scenario (must match _filter_rules logic)
+        if applies_to.scenario_ids:
+            if not context.scenario_id or context.scenario_id not in applies_to.scenario_ids:
+                return False
+
         # Check environment
         if applies_to.environments:
             if not context.environment or context.environment not in applies_to.environments:
                 return False
-        
-        # Check URL patterns
+
+        # Check URL patterns (include/exclude regexes)
         if applies_to.url_include or applies_to.url_exclude:
             if not self._url_matches(context.target_urls, applies_to):
                 return False
-        
+
+        # Check specific URLs (exact matches)
+        if applies_to.urls:
+            if not any(url in applies_to.urls for url in context.target_urls):
+                return False
+
+        # Check vendor filtering
+        if applies_to.vendors:
+            # Check if rule's vendor matches any of the allowed vendors
+            rule_vendor = getattr(rule.check, 'vendor', None)
+            if rule_vendor and rule_vendor not in applies_to.vendors:
+                return False
+
         return True
     
     def _url_matches(self, urls: List[str], applies_to) -> bool:
@@ -700,6 +726,120 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
     
     def _create_check_context(self, rule: Rule, context: EvaluationContext) -> CheckContext:
         """Create check context for rule execution."""
+        # Build complete check configuration including all CheckConfig fields
+        # Only include non-None values to avoid overriding check defaults
+        check_config = {
+            'type': rule.check.type.value,
+        }
+
+        # Add non-None CheckConfig fields
+        if rule.check.vendor is not None:
+            check_config['vendor'] = rule.check.vendor
+        if rule.check.url_pattern is not None:
+            check_config['url_pattern'] = rule.check.url_pattern
+        if rule.check.min_count is not None:
+            check_config['min_count'] = rule.check.min_count
+        if rule.check.max_count is not None:
+            check_config['max_count'] = rule.check.max_count
+        if rule.check.time_window_ms is not None:
+            check_config['time_window_ms'] = rule.check.time_window_ms
+        if rule.check.timeout_seconds is not None:
+            check_config['timeout_seconds'] = rule.check.timeout_seconds
+        if rule.check.retry_count is not None:
+            check_config['retry_count'] = rule.check.retry_count
+        if rule.check.enabled is not None:
+            check_config['enabled'] = rule.check.enabled
+        if rule.check.expression is not None:
+            check_config['expression'] = rule.check.expression
+
+        # Handle check-specific configuration based on check type
+        if hasattr(rule.check, 'config') and rule.check.config:
+            config_dict = rule.check.config
+
+            # Get the check class to understand expected configuration
+            check_class = self._get_cached_check_instance(rule.check.type)
+            if check_class and hasattr(check_class, 'get_supported_config_keys'):
+                # Call get_supported_config_keys as a classmethod
+                try:
+                    supported_keys = check_class.get_supported_config_keys()
+
+                    # Use intelligent filtering for checks with supported keys
+                    if isinstance(config_dict, dict) and 'config' in config_dict:
+                        nested_config = config_dict['config']
+
+                        # Add top-level fields that are in supported keys
+                        for key, value in config_dict.items():
+                            if key != 'config' and key in supported_keys:
+                                check_config[key] = value
+
+                        # Add nested config fields that are in supported keys
+                        if isinstance(nested_config, dict):
+                            for key, value in nested_config.items():
+                                if key in supported_keys:
+                                    check_config[key] = value
+                    else:
+                        # No nested config, add all supported fields directly
+                        for key, value in config_dict.items():
+                            if key in supported_keys:
+                                check_config[key] = value
+
+                    # Apply alias defaults only to the filtered config
+                    alias_config = self._apply_alias_config_defaults(rule.check.type.value, {})
+                    for key, value in alias_config.items():
+                        if key in supported_keys and key not in check_config:
+                            check_config[key] = value
+
+                    # Add parameters from CheckConfig.parameters field if it exists
+                    if hasattr(rule.check, 'parameters') and rule.check.parameters:
+                        for key, value in rule.check.parameters.items():
+                            if key in supported_keys:
+                                check_config[key] = value
+
+                    # Return early with filtered config - match fallback path exactly
+                    return CheckContext(
+                        indexes=context.indexes,
+                        query=context.query,
+                        rule_id=rule.id,
+                        rule_config={
+                            'severity': rule.severity.value,
+                            'tags': rule.tags or [],
+                            'environment': context.environment
+                        },
+                        check_config=check_config,
+                        environment=context.environment,
+                        target_urls=context.target_urls,
+                        debug=context.debug,
+                        timeout_ms=context.timeout_seconds * 1000
+                    )
+                except Exception:
+                    # If classmethod call fails, fall through to old behavior
+                    pass
+
+            # Fallback to old behavior for checks without supported_config_keys or if getting keys failed
+            # Add check-specific config and apply alias defaults
+            nested_config = self._apply_alias_config_defaults(rule.check.type.value, rule.check.config)
+            check_config.update(nested_config)
+
+            # Add parameters from CheckConfig.parameters field if it exists
+            if hasattr(rule.check, 'parameters') and rule.check.parameters:
+                check_config.update(rule.check.parameters)
+
+            # Legacy flattening logic
+            if isinstance(config_dict, dict) and 'config' in config_dict:
+                check_config.update(config_dict['config'])
+                for key, value in config_dict.items():
+                    if key != 'config':
+                        check_config[key] = value
+            else:
+                check_config.update(config_dict)
+        else:
+            # No config dict, just apply alias defaults and parameters
+            nested_config = self._apply_alias_config_defaults(rule.check.type.value, {})
+            check_config.update(nested_config)
+
+            if hasattr(rule.check, 'parameters') and rule.check.parameters:
+                check_config.update(rule.check.parameters)
+
         return CheckContext(
             indexes=context.indexes,
             query=context.query,
@@ -709,7 +849,7 @@ class RuleEvaluationEngine(OptimizedRuleEvaluationEngine):
                 'tags': rule.tags or [],
                 'environment': context.environment
             },
-            check_config=self._apply_alias_config_defaults(rule.check.type, rule.check.config),
+            check_config=check_config,
             environment=context.environment,
             target_urls=context.target_urls,
             debug=context.debug,

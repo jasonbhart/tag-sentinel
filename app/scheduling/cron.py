@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import logging
 import zoneinfo
 
-from croniter import croniter, CroniterError
+from croniter import croniter
+from croniter.croniter import CroniterError
 
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import json
 import statistics
 
-from .models import ValidationIssue, ValidationSeverity, DLAggregate
+from .models import ValidationIssue, ValidationSeverity, DLAggregate, VariablePresence, EventFrequency
 from .config import AggregationConfig
 from .runtime_validation import validate_types
 
@@ -227,14 +227,16 @@ class DataAggregator:
         # Process variable presence and examples
         if self.config.track_variable_presence:
             self._process_variables(latest_data, "", timestamp)
-        
+            # Update total pages for ALL existing variables after processing this page
+            self._update_variable_totals()
+
         # Process events
         if self.config.track_event_frequency:
             self._process_events(events_data, page_url, timestamp)
-        
+
         # Process validation issues
         self._process_validation_issues(validation_issues, timestamp)
-        
+
         self.run_completed = timestamp
     
     def _process_variables(
@@ -261,9 +263,6 @@ class DataAggregator:
                         total_pages=self.total_pages_processed
                     )
                 
-                # Update total pages for existing variables
-                self.variable_stats[key].total_pages = self.total_pages_processed
-                
                 # Add this occurrence
                 self.variable_stats[key].add_value(value, current_path, timestamp)
                 
@@ -275,7 +274,15 @@ class DataAggregator:
                         if isinstance(item, dict):
                             item_path = f"{current_path}/{i}"
                             self._process_variables(item, item_path, timestamp)
-    
+
+    def _update_variable_totals(self) -> None:
+        """Update total page count for all variables after processing a page.
+
+        This ensures accurate presence rate calculations across the entire run.
+        """
+        for var_stats in self.variable_stats.values():
+            var_stats.total_pages = self.total_pages_processed
+
     def _process_events(
         self,
         events_data: List[Dict[str, Any]],
@@ -290,12 +297,13 @@ class DataAggregator:
             timestamp: Processing timestamp
         """
         for event in events_data:
-            # Determine event type
+            # Determine event type using the standard fallback chain
             event_type = (
-                event.get('event') or 
-                event.get('eventName') or 
+                event.get('event') or
+                event.get('eventName') or
                 event.get('eventAction') or
-                'unknown_event'
+                event.get('type') or
+                'unknown'
             )
             
             # Initialize or update event stats
@@ -351,19 +359,39 @@ class DataAggregator:
         if self.run_started and self.run_completed:
             run_duration = (self.run_completed - self.run_started).total_seconds()
         
-        return DLAggregate(
+        # Create the aggregate with proper field mapping
+        aggregate = DLAggregate(
             total_pages=self.total_pages_processed,
-            run_duration_seconds=run_duration,
-            variables_found=len(self.variable_stats),
-            events_found=len(self.event_stats),
-            validation_issues=sum(p.frequency for p in self.issue_patterns.values()),
-            variable_analysis=variable_summary,
-            event_analysis=event_summary,
-            validation_analysis=issue_summary,
-            run_started=self.run_started,
-            run_completed=self.run_completed,
-            processed_urls=self.processed_urls.copy()
+            start_time=self.run_started or datetime.utcnow(),
+            end_time=self.run_completed,
+            total_validation_issues=sum(p.frequency for p in self.issue_patterns.values())
         )
+
+        # Convert variable stats to VariablePresence objects
+        for var_name, var_stats in self.variable_stats.items():
+            # Use the first path seen, or create a default path
+            path = list(var_stats.paths_seen)[0] if var_stats.paths_seen else f"/{var_name}"
+
+            aggregate.variables[var_name] = VariablePresence(
+                name=var_name,
+                path=path,
+                total_pages=self.total_pages_processed,
+                pages_with_variable=var_stats.presence_count,
+                types_observed=list(var_stats.value_types),
+                example_values=var_stats.example_values[:3]  # Limit to 3 examples
+            )
+
+        # Convert event stats to EventFrequency objects
+        for event_type, event_stats in self.event_stats.items():
+            aggregate.events[event_type] = EventFrequency(
+                event_type=event_type,
+                total_pages=self.total_pages_processed,
+                pages_with_event=len(event_stats.pages_seen),
+                total_occurrences=event_stats.frequency,
+                example_events=event_stats.example_data[:3]  # Preserve up to 3 example events with full context
+            )
+
+        return aggregate
     
     def _analyze_variables(self) -> Dict[str, Any]:
         """Analyze variable statistics.

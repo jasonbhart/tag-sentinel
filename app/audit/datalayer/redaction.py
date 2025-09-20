@@ -1127,14 +1127,14 @@ class Redactor:
                     
                     if detections:
                         # Use the highest confidence detection
-                        best_detection = max(detections, key=lambda d: d['adjusted_confidence'])
+                        best_detection = max(detections, key=lambda d: d.adjusted_confidence)
                         
-                        if best_detection['adjusted_confidence'] >= self.config.confidence_threshold:
+                        if best_detection.adjusted_confidence >= self.config.confidence_threshold:
                             original_type = type(value).__name__
                             
                             # Apply pattern-specific redaction method
                             redacted_value = self._apply_redaction_method(
-                                value, best_detection['recommended_method']
+                                value, best_detection.recommended_method
                             )
                             data[key] = redacted_value
                             
@@ -1142,17 +1142,17 @@ class Redactor:
                             self.audit_trail.append(RedactionAuditEntry(
                                 path=key_path,
                                 original_type=original_type,
-                                method=best_detection['recommended_method'],
-                                reason=f"Advanced pattern detection: {best_detection['pattern_name']} "
-                                       f"(confidence: {best_detection['adjusted_confidence']:.2f}, "
-                                       f"category: {best_detection['pattern_category']})",
-                                pattern_matched=best_detection['pattern_name']
+                                method=best_detection.recommended_method,
+                                reason=f"Advanced pattern detection: {best_detection.pattern_name} "
+                                       f"(confidence: {best_detection.adjusted_confidence:.2f}, "
+                                       f"category: {best_detection.pattern_category})",
+                                pattern_matched=best_detection.pattern_name
                             ))
                             
                             logger.debug(
                                 f"Advanced pattern redacted {key_path}: "
-                                f"{best_detection['pattern_name']} "
-                                f"(confidence: {best_detection['adjusted_confidence']:.2f})"
+                                f"{best_detection.pattern_name} "
+                                f"(confidence: {best_detection.adjusted_confidence:.2f})"
                             )
                             continue
                     
@@ -1389,7 +1389,7 @@ class Redactor:
                     # Value should be masked with asterisks
                     if redacted_value == original_value:
                         issues.append(f"MASK redaction failed at {entry.path}: value unchanged")
-                    elif not str(redacted_value).startswith('*'):
+                    elif '*' not in str(redacted_value):
                         issues.append(f"MASK redaction failed at {entry.path}: not properly masked")
                 
                 elif entry.method == RedactionMethod.TRUNCATE:
