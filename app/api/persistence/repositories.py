@@ -147,6 +147,10 @@ class InMemoryAuditRepository(AuditRepository):
     ) -> Optional[PersistentAuditRecord]:
         """Find audit by idempotency key within time window."""
         async with self._lock:
+            # Special case: max_age_hours=0 means no results (expired immediately)
+            if max_age_hours == 0:
+                return None
+
             cutoff_time = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
 
             for audit in self._audits.values():

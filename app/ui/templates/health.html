@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}System Health - Tag Sentinel{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol class="breadcrumb-list">
+        <li class="breadcrumb-item">
+            <a href="/ui/" class="breadcrumb-link">Dashboard</a>
+        </li>
+        <li class="breadcrumb-item" aria-current="page">System Health</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block page_actions %}
+<div class="page-actions">
+    <button class="btn btn-secondary" id="refresh-btn">
+        Refresh
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Overall Status -->
+<section class="status-overview" aria-labelledby="status-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="status-heading">System Status</h2>
+        </div>
+        <div class="status-content" id="status-content" data-refresh="/health">
+            <div class="loading-container">
+                <div class="spinner" aria-hidden="true"></div>
+                <span>Loading system status...</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Service Health -->
+<section class="services-section" aria-labelledby="services-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="services-heading">Service Health</h2>
+        </div>
+        <div class="services-grid" id="services-grid">
+            <!-- Service status cards populated by JavaScript -->
+        </div>
+    </div>
+</section>
+
+<!-- System Metrics -->
+<section class="metrics-section" aria-labelledby="metrics-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="metrics-heading">System Metrics</h2>
+        </div>
+        <div class="metrics-content" id="metrics-content">
+            <!-- Metrics populated by JavaScript -->
+        </div>
+    </div>
+</section>
+
+<style>
+.status-content {
+    padding: 2rem;
+    text-align: center;
+}
+
+.system-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 2rem;
+    border-radius: 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.system-status.healthy {
+    background: #d4edda;
+    color: #155724;
+}
+
+.system-status.degraded {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.system-status.unhealthy {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.status-icon {
+    font-size: 1.5rem;
+}
+
+.services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.service-card {
+    padding: 1rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    text-align: center;
+}
+
+.service-card.healthy {
+    border-left: 4px solid #28a745;
+    background: #f8fff9;
+}
+
+.service-card.degraded {
+    border-left: 4px solid #ffc107;
+    background: #fffbf0;
+}
+
+.service-card.unhealthy {
+    border-left: 4px solid #dc3545;
+    background: #fdf2f2;
+}
+
+.service-name {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #1a1a1a;
+}
+
+.service-status {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.metrics-content {
+    padding: 1rem;
+}
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.metric-item {
+    text-align: center;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+}
+
+.metric-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a73e8;
+}
+
+@media (max-width: 768px) {
+    .services-grid,
+    .metrics-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadHealthData();
+
+    // Refresh button
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', loadHealthData);
+    }
+
+    // Auto-refresh every 30 seconds
+    setInterval(loadHealthData, 30000);
+});
+
+async function loadHealthData() {
+    try {
+        const response = await fetch('/health');
+        const data = await response.json();
+
+        displaySystemStatus(data);
+        displayServices(data.services || {});
+        displayMetrics(data);
+
+    } catch (error) {
+        console.error('Failed to load health data:', error);
+        showHealthError();
+    }
+}
+
+function displaySystemStatus(data) {
+    const statusContent = document.getElementById('status-content');
+    if (!statusContent) return;
+
+    const status = data.status || 'unknown';
+    const statusIcon = {
+        'healthy': '✅',
+        'degraded': '⚠️',
+        'unhealthy': '❌'
+    }[status] || '❓';
+
+    statusContent.innerHTML = `
+        <div class="system-status ${status}">
+            <span class="status-icon">${statusIcon}</span>
+            <span>System is ${status}</span>
+        </div>
+        <div style="margin-top: 1rem; color: #6c757d; font-size: 0.875rem;">
+            Last updated: ${new Date().toLocaleString()}
+        </div>
+    `;
+}
+
+function displayServices(services) {
+    const servicesGrid = document.getElementById('services-grid');
+    if (!servicesGrid) return;
+
+    servicesGrid.innerHTML = Object.entries(services).map(([name, status]) => `
+        <div class="service-card ${status}">
+            <div class="service-name">${name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</div>
+            <div class="service-status">${status}</div>
+        </div>
+    `).join('');
+}
+
+function displayMetrics(data) {
+    const metricsContent = document.getElementById('metrics-content');
+    if (!metricsContent) return;
+
+    metricsContent.innerHTML = `
+        <div class="metrics-grid">
+            <div class="metric-item">
+                <div class="metric-label">Uptime</div>
+                <div class="metric-value">${formatUptime(data.uptime_seconds)}</div>
+            </div>
+            <div class="metric-item">
+                <div class="metric-label">Version</div>
+                <div class="metric-value">${data.version || 'Unknown'}</div>
+            </div>
+        </div>
+    `;
+}
+
+function formatUptime(seconds) {
+    if (!seconds) return 'Unknown';
+
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+}
+
+function showHealthError() {
+    const statusContent = document.getElementById('status-content');
+    if (statusContent) {
+        statusContent.innerHTML = `
+            <div class="system-status unhealthy">
+                <span class="status-icon">❌</span>
+                <span>Unable to load system status</span>
+            </div>
+            <button onclick="loadHealthData()" class="btn btn-primary" style="margin-top: 1rem;">
+                Retry
+            </button>
+        `;
+    }
+}
+</script>
+{% endblock %}

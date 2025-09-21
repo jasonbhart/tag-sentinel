@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+
+{% block title %}Run {{ run_id }} - Tag Sentinel{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol class="breadcrumb-list">
+        <li class="breadcrumb-item">
+            <a href="/ui/" class="breadcrumb-link">Dashboard</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="/ui/runs" class="breadcrumb-link">Audit Runs</a>
+        </li>
+        <li class="breadcrumb-item" aria-current="page">Run {{ run_id }}</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block page_actions %}
+<div class="page-actions">
+    <button class="btn btn-secondary" id="export-run-btn">
+        Export Data
+    </button>
+    <button class="btn btn-secondary" id="refresh-btn">
+        Refresh
+    </button>
+    <a href="/ui/runs" class="btn btn-secondary">
+        Back to Runs
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Run Overview -->
+<section class="run-overview" aria-labelledby="overview-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="overview-heading">Run Overview</h2>
+        </div>
+        <div class="overview-grid" id="run-overview" data-refresh="/audits/{{ run_id }}">
+            <!-- Loading state -->
+            <div class="loading-container">
+                <div class="spinner" aria-hidden="true"></div>
+                <span>Loading run details...</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Reports Tabs -->
+<section class="reports-section" aria-labelledby="reports-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="reports-heading">Audit Reports</h2>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation" role="tablist" aria-label="Audit report categories">
+            <button class="tab-button active"
+                    role="tab"
+                    aria-selected="true"
+                    aria-controls="pages-panel"
+                    id="pages-tab"
+                    data-tab="pages">
+                Pages
+                <span class="tab-count" id="pages-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="tags-panel"
+                    id="tags-tab"
+                    data-tab="tags">
+                Tag Inventory
+                <span class="tab-count" id="tags-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="health-panel"
+                    id="health-tab"
+                    data-tab="health">
+                Tag Health
+                <span class="tab-count" id="health-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="duplicates-panel"
+                    id="duplicates-tab"
+                    data-tab="duplicates">
+                Duplicates
+                <span class="tab-count" id="duplicates-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="variables-panel"
+                    id="variables-tab"
+                    data-tab="variables">
+                Variables
+                <span class="tab-count" id="variables-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="cookies-panel"
+                    id="cookies-tab"
+                    data-tab="cookies">
+                Cookies
+                <span class="tab-count" id="cookies-count">0</span>
+            </button>
+            <button class="tab-button"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="rules-panel"
+                    id="rules-tab"
+                    data-tab="rules">
+                Rule Failures
+                <span class="tab-count" id="rules-count">0</span>
+            </button>
+        </div>
+
+        <!-- Tab Panels -->
+        <div class="tab-content">
+            <!-- Pages Panel -->
+            <div class="tab-panel active"
+                 role="tabpanel"
+                 aria-labelledby="pages-tab"
+                 id="pages-panel">
+                <div class="panel-header">
+                    <h3>Pages Audited</h3>
+                    <div class="panel-filters">
+                        <select class="form-control" id="pages-status-filter" aria-label="Filter pages by status">
+                            <option value="">All Statuses</option>
+                            <option value="success">Success</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                        <input type="search"
+                               class="form-control"
+                               id="pages-search"
+                               placeholder="Search pages..."
+                               aria-label="Search pages">
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Pages list">
+                        <caption class="sr-only">List of audited pages with status and issues</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" data-sortable>URL</th>
+                                <th scope="col" data-sortable>Status</th>
+                                <th scope="col" data-sortable>Tags Found</th>
+                                <th scope="col" data-sortable>Issues</th>
+                                <th scope="col" data-sortable>Load Time</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pages-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="panel-pagination" id="pages-pagination">
+                    <!-- Pagination controls -->
+                </div>
+            </div>
+
+            <!-- Tag Inventory Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="tags-tab"
+                 id="tags-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Tag Inventory</h3>
+                    <div class="panel-filters">
+                        <select class="form-control" id="tags-vendor-filter" aria-label="Filter by vendor">
+                            <option value="">All Vendors</option>
+                            <option value="ga4">Google Analytics 4</option>
+                            <option value="gtm">Google Tag Manager</option>
+                            <option value="facebook">Facebook Pixel</option>
+                            <option value="other">Other</option>
+                        </select>
+                        <select class="form-control" id="tags-status-filter" aria-label="Filter by tag status">
+                            <option value="">All Statuses</option>
+                            <option value="ok">OK</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Tag inventory">
+                        <caption class="sr-only">List of detected tags with vendor and status information</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" data-sortable>Vendor</th>
+                                <th scope="col" data-sortable>Tag Name</th>
+                                <th scope="col" data-sortable>Measurement ID</th>
+                                <th scope="col" data-sortable>Pages</th>
+                                <th scope="col" data-sortable>Events</th>
+                                <th scope="col" data-sortable>Status</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tags-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tag Health Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="health-tab"
+                 id="health-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Tag Health Analysis</h3>
+                </div>
+                <div class="health-metrics">
+                    <div class="metric-card">
+                        <h4>Load Performance</h4>
+                        <div class="metric-value" id="load-performance">—</div>
+                    </div>
+                    <div class="metric-card">
+                        <h4>Error Rate</h4>
+                        <div class="metric-value" id="error-rate">—</div>
+                    </div>
+                    <div class="metric-card">
+                        <h4>Tag Coverage</h4>
+                        <div class="metric-value" id="tag-coverage">—</div>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Tag health details">
+                        <thead>
+                            <tr>
+                                <th scope="col">Issue Type</th>
+                                <th scope="col">Affected Tags</th>
+                                <th scope="col">Pages</th>
+                                <th scope="col">Severity</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="health-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Duplicates Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="duplicates-tab"
+                 id="duplicates-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Duplicate Events</h3>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Duplicate events">
+                        <thead>
+                            <tr>
+                                <th scope="col">Event Type</th>
+                                <th scope="col">Page</th>
+                                <th scope="col">Occurrences</th>
+                                <th scope="col">Tags Involved</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="duplicates-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Variables Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="variables-tab"
+                 id="variables-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Data Layer Variables</h3>
+                    <div class="panel-filters">
+                        <select class="form-control" id="variables-type-filter" aria-label="Filter by variable type">
+                            <option value="">All Types</option>
+                            <option value="ecommerce">E-commerce</option>
+                            <option value="user">User</option>
+                            <option value="page">Page</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Data layer variables">
+                        <thead>
+                            <tr>
+                                <th scope="col">Variable Name</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Pages Present</th>
+                                <th scope="col">Validation</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="variables-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Cookies Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="cookies-tab"
+                 id="cookies-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Cookie Inventory</h3>
+                    <div class="panel-filters">
+                        <select class="form-control" id="cookies-category-filter" aria-label="Filter by cookie category">
+                            <option value="">All Categories</option>
+                            <option value="essential">Essential</option>
+                            <option value="analytics">Analytics</option>
+                            <option value="marketing">Marketing</option>
+                            <option value="functional">Functional</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="privacy-summary">
+                    <div class="summary-item">
+                        <h4>Privacy Compliance</h4>
+                        <div class="compliance-score" id="compliance-score">—</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>Third-party Cookies</h4>
+                        <div class="third-party-count" id="third-party-count">—</div>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Cookie inventory">
+                        <thead>
+                            <tr>
+                                <th scope="col">Cookie Name</th>
+                                <th scope="col">Domain</th>
+                                <th scope="col">Category</th>
+                                <th scope="col">Duration</th>
+                                <th scope="col">Privacy Impact</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cookies-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Rule Failures Panel -->
+            <div class="tab-panel"
+                 role="tabpanel"
+                 aria-labelledby="rules-tab"
+                 id="rules-panel"
+                 aria-hidden="true">
+                <div class="panel-header">
+                    <h3>Rule Failures</h3>
+                    <div class="panel-filters">
+                        <select class="form-control" id="rules-severity-filter" aria-label="Filter by severity">
+                            <option value="">All Severities</option>
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table class="table" role="table" aria-label="Rule failures">
+                        <thead>
+                            <tr>
+                                <th scope="col">Rule</th>
+                                <th scope="col">Description</th>
+                                <th scope="col">Severity</th>
+                                <th scope="col">Affected Pages</th>
+                                <th scope="col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rules-tbody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<style>
+.run-overview .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    padding: 1rem 0;
+}
+
+.overview-item {
+    text-align: center;
+}
+
+.overview-label {
+    display: block;
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.overview-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.tab-navigation {
+    display: flex;
+    border-bottom: 1px solid #e9ecef;
+    overflow-x: auto;
+    padding: 0 1rem;
+}
+
+.tab-button {
+    background: none;
+    border: none;
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    color: #6c757d;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tab-button:hover {
+    color: #1a73e8;
+    background-color: #f8f9fa;
+}
+
+.tab-button.active {
+    color: #1a73e8;
+    border-bottom-color: #1a73e8;
+}
+
+.tab-button:focus {
+    outline: 2px solid #1a73e8;
+    outline-offset: -2px;
+}
+
+.tab-count {
+    background-color: #e9ecef;
+    color: #495057;
+    padding: 0.125rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.tab-button.active .tab-count {
+    background-color: #1a73e8;
+    color: white;
+}
+
+.tab-content {
+    padding: 1.5rem;
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.panel-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.panel-filters {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.panel-filters .form-control {
+    min-width: 150px;
+}
+
+.health-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.metric-card {
+    padding: 1rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    text-align: center;
+    background: #f8f9fa;
+}
+
+.metric-card h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.metric-card .metric-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a73e8;
+}
+
+.privacy-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+}
+
+.summary-item {
+    text-align: center;
+}
+
+.summary-item h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.compliance-score,
+.third-party-count {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.panel-pagination {
+    display: flex;
+    justify-content: center;
+    padding: 1rem 0;
+    border-top: 1px solid #e9ecef;
+    margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+    .tab-navigation {
+        padding: 0 0.5rem;
+    }
+
+    .tab-button {
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+    }
+
+    .tab-content {
+        padding: 1rem;
+    }
+
+    .panel-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .panel-filters {
+        flex-direction: column;
+    }
+
+    .panel-filters .form-control {
+        min-width: auto;
+    }
+
+    .health-metrics,
+    .privacy-summary {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/ui/static/js/run-detail.js"></script>
+{% endblock %}

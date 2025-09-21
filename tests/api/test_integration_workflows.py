@@ -94,7 +94,7 @@ class TestEndToEndWorkflows:
         assert audit_data["site_id"] == "ecommerce"
         assert audit_data["env"] == "staging"
         assert audit_data["status"] == "queued"
-        assert audit_data["params"]["max_pages"] == 10
+        # Note: AuditRef response doesn't include params, check in detail response later
 
         # Step 2: Get audit details
         get_response = client.get(f"/api/audits/{audit_id}")
@@ -103,6 +103,8 @@ class TestEndToEndWorkflows:
         get_data = get_response.json()
         assert get_data["id"] == audit_id
         assert get_data["status"] == "queued"
+        # Verify params are included in the detail response
+        assert get_data["params"]["max_pages"] == 10
 
         # Step 3: Simulate audit progression (would normally be done by runner)
         # This would happen asynchronously in real implementation

@@ -275,6 +275,48 @@ class AuditDetail(BaseModel):
         description="Detailed error information for debugging"
     )
 
+    # Detailed audit results (only populated for completed audits)
+    pages: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Detailed page-level results"
+    )
+
+    tags: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Tag detection results"
+    )
+
+    health: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Performance and health metrics"
+    )
+
+    duplicates: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Duplicate tag detection results"
+    )
+
+    variables: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Data layer variables analysis"
+    )
+
+    cookies: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Cookie usage analysis"
+    )
+
+    rules: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Rule violation results"
+    )
+
+    # Privacy analysis results
+    privacy_summary: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Privacy compliance summary"
+    )
+
     # Links to related resources
     links: AuditLinks = Field(
         ...,
@@ -311,6 +353,46 @@ class AuditDetail(BaseModel):
                 "metadata": {
                     "triggered_by": "scheduled_job",
                     "campaign": "holiday_checkout_monitoring"
+                },
+                "pages": [
+                    {
+                        "id": "page_1",
+                        "url": "https://example.com/",
+                        "status": "completed",
+                        "load_time": 1250,
+                        "tags_count": 5,
+                        "issues_count": 0
+                    }
+                ],
+                "tags": [
+                    {
+                        "vendor": "google",
+                        "tag_type": "analytics",
+                        "measurement_id": "G-XXXXXXXXXX",
+                        "confidence": "high",
+                        "events_count": 12
+                    }
+                ],
+                "health": {
+                    "load_performance": "Good",
+                    "error_rate": "2.1%",
+                    "tag_coverage": "94%",
+                    "issues": []
+                },
+                "cookies": [
+                    {
+                        "name": "_ga",
+                        "domain": ".example.com",
+                        "category": "analytics",
+                        "max_age": 63072000,
+                        "privacy_impact": "medium"
+                    }
+                ],
+                "privacy_summary": {
+                    "total_cookies": 23,
+                    "analytics_cookies": 8,
+                    "marketing_cookies": 12,
+                    "functional_cookies": 3
                 },
                 "links": {
                     "self": "https://api.example.com/api/audits/audit_2024011501_ecommerce_prod",
@@ -351,6 +433,11 @@ class AuditList(BaseModel):
         description="Cursor for retrieving the next page of results"
     )
 
+    prev_cursor: Optional[str] = Field(
+        default=None,
+        description="Cursor for retrieving the previous page of results"
+    )
+
     summary_stats: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Summary statistics across all matching audits"
@@ -381,6 +468,7 @@ class AuditList(BaseModel):
                 "total_count": 127,
                 "has_more": True,
                 "next_cursor": "eyJpZCI6ImF1ZGl0XzIwMjQwMTE0MDFfZWNvbW1lcmNlX3Byb2QiLCJzb3J0IjoiY3JlYXRlZF9hdCJ9",
+                "prev_cursor": "eyJpZCI6ImF1ZGl0XzIwMjQwMTE2MDFfZWNvbW1lcmNlX3Byb2QiLCJzb3J0IjoiY3JlYXRlZF9hdCJ9",
                 "summary_stats": {
                     "total_pages_processed": 15420,
                     "avg_duration_seconds": 654.2,

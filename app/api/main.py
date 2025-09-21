@@ -14,10 +14,13 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from pathlib import Path
 
 from app.api.schemas import ErrorResponse, HealthResponse
 from app.api.routes import audits_router, exports_router, artifacts_router
+from app.ui import ui_router
 
 
 # Configure logging
@@ -286,10 +289,18 @@ def create_app() -> FastAPI:
             }
         )
 
+    # Mount static files for UI
+    static_dir = Path(__file__).parent.parent / "ui" / "static"
+    if static_dir.exists():
+        app.mount("/ui/static", StaticFiles(directory=str(static_dir)), name="static")
+
     # Include API routers
     app.include_router(audits_router, prefix="/api")
     app.include_router(exports_router, prefix="/api")
     app.include_router(artifacts_router, prefix="/api")
+
+    # Include UI router
+    app.include_router(ui_router)
 
     return app
 

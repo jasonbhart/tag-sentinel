@@ -287,6 +287,7 @@ class RunDispatcher:
     async def start(self) -> None:
         """Start the dispatcher."""
         if self._dispatcher_task is None:
+            self._shutdown = False  # Reset shutdown flag
             self._dispatcher_task = asyncio.create_task(self._dispatcher_loop())
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
             logger.info("Started run dispatcher")
@@ -309,6 +310,10 @@ class RunDispatcher:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+
+        # Reset task references to allow restart
+        self._dispatcher_task = None
+        self._cleanup_task = None
 
         logger.info("Stopped run dispatcher")
 

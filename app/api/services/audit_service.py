@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
 from enum import Enum
 from collections.abc import Iterable
+from urllib.parse import urlparse, parse_qs
 
 from app.api.schemas import (
     CreateAuditRequest,
@@ -25,7 +26,8 @@ from app.api.schemas import (
 )
 from app.api.schemas.responses import AuditStatus
 from app.audit.models.crawl import CrawlConfig
-from app.api.persistence.repositories import AuditRepository
+from app.api.persistence.repositories import AuditRepository, ExportDataRepository
+from app.api.schemas.exports import TagExport, CookieExport
 from app.api.persistence.factory import RepositoryFactory
 from app.api.persistence.models import PersistentAuditRecord
 from app.api.runner_integration import RunnerIntegrationService
@@ -86,6 +88,7 @@ class AuditService:
         idempotency_window_hours: int = 24,
         max_audit_age_days: int = 90,
         repository: Optional[AuditRepository] = None,
+        export_repository: Optional[ExportDataRepository] = None,
         runner_service: Optional[RunnerIntegrationService] = None
     ):
         """Initialize the audit service.
@@ -95,6 +98,7 @@ class AuditService:
             idempotency_window_hours: Time window for idempotency key validity
             max_audit_age_days: Maximum age for audit retention
             repository: Audit repository instance (defaults to in-memory)
+            export_repository: Export data repository instance (defaults to in-memory)
             runner_service: Runner integration service (defaults to mock)
         """
         self.base_url = base_url.rstrip('/')
@@ -103,6 +107,9 @@ class AuditService:
 
         # Use provided repository or default from factory
         self.repository = repository or RepositoryFactory.create_audit_repository()
+
+        # Use provided export repository or default from factory
+        self.export_repository = export_repository or RepositoryFactory.create_export_repository()
 
         # Use provided runner service or default to mock
         self.runner_service = runner_service or RunnerIntegrationService()
@@ -199,7 +206,14 @@ class AuditService:
         if not persistent_record:
             raise AuditNotFoundError(f"Audit {audit_id} not found")
 
-        return persistent_record.to_api_model(self.base_url)
+        # Get base audit detail
+        audit_detail = persistent_record.to_api_model(self.base_url)
+
+        # Populate detailed report data for completed audits
+        if persistent_record.status == AuditStatus.COMPLETED:
+            audit_detail = await self._populate_report_data(audit_detail, audit_id)
+
+        return audit_detail
 
     async def list_audits(self, request: ListAuditsRequest) -> AuditList:
         """List audits with filtering and pagination.
@@ -236,6 +250,7 @@ class AuditService:
         # Prepare pagination metadata
         has_more = offset + limit < total_count
         next_cursor = str(offset + limit) if has_more else None
+        prev_cursor = str(max(0, offset - limit)) if offset > 0 else None
 
         # Generate summary stats if requested
         summary_stats = None
@@ -252,6 +267,7 @@ class AuditService:
             total_count=total_count,
             has_more=has_more,
             next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
             summary_stats=summary_stats
         )
 
@@ -299,6 +315,7 @@ class AuditService:
             persistent_record.error_message = error_message
         if error_details:
             persistent_record.error_details = error_details
+
 
         # Save to repository
         await self.repository.update_audit(persistent_record)
@@ -517,3 +534,528 @@ class AuditService:
             "success_rate": (len(completed_audits) / total_audits * 100) if total_audits > 0 else 0,
             "avg_duration_seconds": avg_duration,
         }
+
+    async def _populate_report_data(self, audit_detail: AuditDetail, audit_id: str) -> AuditDetail:
+        """Populate detailed report data for a completed audit.
+
+        Args:
+            audit_detail: Base audit detail to enhance
+            audit_id: Audit identifier
+
+        Returns:
+            Enhanced audit detail with report data
+        """
+        try:
+            # Fetch detailed report data from export repository
+            pages_data = await self._get_pages_data(audit_id)
+            tags_data = await self._get_tags_data(audit_id)
+            health_data = await self._get_health_data(audit_id)
+            cookies_data = await self._get_cookies_data(audit_id)
+
+            # Create a new AuditDetail with populated report data using model_copy
+            return audit_detail.model_copy(update={
+                'pages': pages_data,
+                'tags': tags_data,
+                'health': health_data,
+                'duplicates': [],  # TODO: Implement duplicate detection data
+                'variables': [],   # TODO: Implement data layer variables data
+                'cookies': cookies_data,
+                'rules': [],       # TODO: Implement rules violation data
+                'privacy_summary': self._generate_privacy_summary(cookies_data)
+            })
+
+        except Exception as e:
+            logger.warning(f"Failed to populate report data for audit {audit_id}: {e}")
+            # Return original audit detail if report data population fails
+            return audit_detail
+
+    async def _get_pages_data(self, audit_id: str) -> List[Dict[str, Any]]:
+        """Get page-level results data aggregated from real audit data."""
+        try:
+            # Get real data from export repository
+            tags = await self.export_repository.get_tags(audit_id)
+            cookies = await self.export_repository.get_cookies(audit_id)
+            request_logs = await self.export_repository.get_request_logs(audit_id)
+
+            # Group data by page URL
+            page_data = {}
+
+            # Process tags by page
+            for tag in tags:
+                page_url = str(tag.page_url)
+                if page_url not in page_data:
+                    # Generate stable, deterministic page ID using UUID5 (full hex for uniqueness)
+                    page_id = uuid.uuid5(uuid.NAMESPACE_URL, page_url).hex
+                    page_data[page_url] = {
+                        "id": f"page_{page_id}",
+                        "url": page_url,
+                        "status": "completed",
+                        "load_time": 0,
+                        "tags_count": 0,
+                        "issues_count": 0,
+                        "cookies_count": 0,
+                        "_load_times": [],  # Temporary field for calculations
+                        "_has_errors": False
+                    }
+
+                page_data[page_url]["tags_count"] += 1
+
+                # Track load times if available
+                if hasattr(tag, 'load_time') and tag.load_time:
+                    page_data[page_url]["_load_times"].append(tag.load_time)
+
+                # Count issues (tags with errors or validation problems)
+                if (hasattr(tag, 'has_errors') and tag.has_errors) or \
+                   (hasattr(tag, 'validation_issues') and tag.validation_issues):
+                    page_data[page_url]["issues_count"] += 1
+                    page_data[page_url]["_has_errors"] = True
+
+            # Process cookies by page
+            for cookie in cookies:
+                page_url = str(cookie.page_url)
+                if page_url not in page_data:
+                    # Generate stable, deterministic page ID using UUID5 (full hex for uniqueness)
+                    page_id = uuid.uuid5(uuid.NAMESPACE_URL, page_url).hex
+                    page_data[page_url] = {
+                        "id": f"page_{page_id}",
+                        "url": page_url,
+                        "status": "completed",
+                        "load_time": 0,
+                        "tags_count": 0,
+                        "issues_count": 0,
+                        "cookies_count": 0,
+                        "_load_times": [],
+                        "_has_errors": False
+                    }
+
+                page_data[page_url]["cookies_count"] += 1
+
+            # Process request logs by page for additional timing data
+            for request in request_logs:
+                page_url = str(request.page_url)
+                if page_url not in page_data:
+                    # Generate stable, deterministic page ID using UUID5 (full hex for uniqueness)
+                    page_id = uuid.uuid5(uuid.NAMESPACE_URL, page_url).hex
+                    page_data[page_url] = {
+                        "id": f"page_{page_id}",
+                        "url": page_url,
+                        "status": "completed",
+                        "load_time": 0,
+                        "tags_count": 0,
+                        "issues_count": 0,
+                        "cookies_count": 0,
+                        "_load_times": [],
+                        "_has_errors": False
+                    }
+
+                # Add request timing data if available
+                if hasattr(request, 'response_time') and request.response_time:
+                    page_data[page_url]["_load_times"].append(request.response_time)
+
+                # Check for failed requests
+                if hasattr(request, 'status') and request.status in ['failed', 'timeout', 'aborted']:
+                    page_data[page_url]["issues_count"] += 1
+                    page_data[page_url]["_has_errors"] = True
+
+            # Calculate final metrics and clean up temporary fields
+            result = []
+            for page_url, data in page_data.items():
+                # Calculate average load time
+                if data["_load_times"]:
+                    data["load_time"] = int(sum(data["_load_times"]) / len(data["_load_times"]))
+                else:
+                    data["load_time"] = 0
+
+                # Set status based on whether there were errors
+                if data["_has_errors"]:
+                    data["status"] = "completed_with_issues"
+                else:
+                    data["status"] = "completed"
+
+                # Remove temporary fields
+                del data["_load_times"]
+                del data["_has_errors"]
+
+                result.append(data)
+
+            # Sort by URL for consistent ordering
+            result.sort(key=lambda x: x["url"])
+
+            logger.debug(f"Retrieved {len(result)} pages for audit {audit_id}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get pages data for audit {audit_id}: {e}")
+            return []
+
+    async def _get_tags_data(self, audit_id: str) -> List[Dict[str, Any]]:
+        """Get tag detection results data."""
+        try:
+            tags = await self.export_repository.get_tags(audit_id)
+            request_logs = await self.export_repository.get_request_logs(audit_id)
+
+            # Build a map of analytics requests per tracking ID to derive event counts
+            analytics_requests_by_tracking_id = {}
+            for request in request_logs:
+                if hasattr(request, 'is_analytics') and request.is_analytics:
+                    # Try to extract tracking ID from request URL or headers
+                    url = str(request.url)
+                    tracking_id = None
+
+                    # Parse URL properly to handle all analytics patterns
+                    parsed_url = urlparse(url)
+                    query_params = parse_qs(parsed_url.query)
+
+                    # Helper function to extract valid container IDs
+                    def extract_container_id(param_values):
+                        """Extract valid GTM/Optimize container ID from parameter values."""
+                        return next((v.strip() for v in param_values
+                                   if v.strip().upper().startswith(('GTM-', 'OPT-'))), None)
+
+                    # Check for GTM container ID first (works for any domain including custom)
+                    # Scan all 'id' parameters to handle middleware/CDN scenarios with multiple values
+                    if 'id' in query_params:
+                        gtm_id = extract_container_id(query_params.get('id', []))
+                        if gtm_id:
+                            tracking_id = gtm_id
+
+                    # Only continue to other checks if we haven't found a tracking_id yet
+                    if not tracking_id:
+                        # Look for Google Analytics tracking ID
+                        if 'google-analytics.com' in parsed_url.netloc and 'tid' in query_params:
+                            tracking_id = query_params['tid'][0]
+
+                        # Look for GTM parameter in analytics requests (Google or custom domains)
+                        elif 'gtm' in query_params:
+                            gtm_id = extract_container_id(query_params.get('gtm', []))
+                            if gtm_id:
+                                tracking_id = gtm_id
+
+                        # Fall back to request.tracking_id attribute if present
+                        elif hasattr(request, 'tracking_id') and request.tracking_id:
+                            tracking_id = request.tracking_id
+
+                    if tracking_id:
+                        # Normalize tracking ID to uppercase for consistent mapping
+                        normalized_tracking_id = tracking_id.upper()
+                        analytics_requests_by_tracking_id[normalized_tracking_id] = analytics_requests_by_tracking_id.get(normalized_tracking_id, 0) + 1
+
+            result = []
+            for tag in tags:
+                tag_data = {
+                    "vendor": tag.vendor,
+                    "tag_type": tag.tag_type,
+                    "measurement_id": tag.tracking_id or 'unknown',
+                    "confidence": "high" if tag.confidence_score >= 0.9 else "medium" if tag.confidence_score >= 0.7 else "low"
+                }
+
+                # Only include events_count if we can derive it from real data
+                tracking_id = tag.tracking_id
+                if tracking_id:
+                    # Normalize tracking ID for case-insensitive lookup
+                    normalized_tag_id = tracking_id.upper()
+                    if normalized_tag_id in analytics_requests_by_tracking_id:
+                        tag_data["events_count"] = analytics_requests_by_tracking_id[normalized_tag_id]
+                # Note: Omitting events_count when no real data is available instead of showing misleading values
+
+                result.append(tag_data)
+
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get tags data for audit {audit_id}: {e}")
+            return []
+
+    async def _get_health_data(self, audit_id: str) -> Dict[str, Any]:
+        """Get performance and health metrics calculated from real audit data."""
+        try:
+            # Get real data from export repository
+            tags = await self.export_repository.get_tags(audit_id)
+            cookies = await self.export_repository.get_cookies(audit_id)
+            request_logs = await self.export_repository.get_request_logs(audit_id)
+
+            # Calculate load performance based on tag load times
+            load_performance = "Unknown"
+            if tags:
+                tag_load_times = [tag.load_time for tag in tags if hasattr(tag, 'load_time') and tag.load_time]
+                if tag_load_times:
+                    avg_load_time = sum(tag_load_times) / len(tag_load_times)
+                    if avg_load_time < 200:
+                        load_performance = "Excellent"
+                    elif avg_load_time < 500:
+                        load_performance = "Good"
+                    elif avg_load_time < 1000:
+                        load_performance = "Fair"
+                    else:
+                        load_performance = "Poor"
+
+            # Calculate error rate from tags and requests
+            total_items = len(tags) + len(request_logs)
+            error_items = 0
+
+            # Count tag errors
+            for tag in tags:
+                if (hasattr(tag, 'has_errors') and tag.has_errors) or \
+                   (hasattr(tag, 'validation_issues') and tag.validation_issues):
+                    error_items += 1
+
+            # Count failed requests
+            for request in request_logs:
+                if hasattr(request, 'status') and request.status in ['failed', 'timeout', 'aborted']:
+                    error_items += 1
+
+            if total_items > 0:
+                error_rate_percent = (error_items / total_items) * 100
+                error_rate = f"{error_rate_percent:.1f}%"
+            else:
+                error_rate = "0.0%"
+
+            # Calculate tag coverage (pages with tags vs total audited pages)
+            # Try to get the canonical count of audited pages from the audit record
+            audit_record = await self.repository.get_audit(audit_id)
+            canonical_pages_count = None
+            if audit_record and audit_record.pages_count > 0:
+                canonical_pages_count = audit_record.pages_count
+
+            # Count pages that actually have tags
+            pages_with_tags = set()
+            for tag in tags:
+                pages_with_tags.add(str(tag.page_url))
+
+            # Count artifact-based pages (which may miss pages with no artifacts)
+            artifact_pages = set()
+            for tag in tags:
+                artifact_pages.add(str(tag.page_url))
+            for cookie in cookies:
+                artifact_pages.add(str(cookie.page_url))
+            for request in request_logs:
+                artifact_pages.add(str(request.page_url))
+
+            # Use canonical pages count if available, otherwise fall back to artifact count
+            # but acknowledge this limitation
+            if canonical_pages_count:
+                total_pages_count = canonical_pages_count
+                coverage_percent = (len(pages_with_tags) / total_pages_count) * 100
+                tag_coverage = f"{coverage_percent:.0f}%"
+            elif artifact_pages:
+                # Fall back to artifact-based counting but note this may inflate coverage
+                coverage_percent = (len(pages_with_tags) / len(artifact_pages)) * 100
+                tag_coverage = f"{coverage_percent:.0f}%*"  # Asterisk indicates potential inflation
+            else:
+                tag_coverage = "0%"
+
+            # Collect issues from real data
+            issues = []
+
+            # Add tag-specific issues
+            for tag in tags:
+                if hasattr(tag, 'has_errors') and tag.has_errors:
+                    issues.append({
+                        "type": "tag_error",
+                        "severity": "high",
+                        "description": f"Tag {tag.tag_id} on {tag.page_url} has errors",
+                        "page_url": str(tag.page_url),
+                        "tag_id": tag.tag_id
+                    })
+
+                if hasattr(tag, 'validation_issues') and tag.validation_issues:
+                    for issue in tag.validation_issues:
+                        issues.append({
+                            "type": "validation_issue",
+                            "severity": "medium",
+                            "description": f"Tag {tag.tag_id}: {issue}",
+                            "page_url": str(tag.page_url),
+                            "tag_id": tag.tag_id
+                        })
+
+            # Add performance issues
+            if load_performance in ["Poor", "Fair"]:
+                issues.append({
+                    "type": "performance_issue",
+                    "severity": "medium" if load_performance == "Fair" else "high",
+                    "description": f"Poor tag load performance detected (average load time indicates {load_performance.lower()} performance)",
+                    "metric": "load_performance",
+                    "value": load_performance
+                })
+
+            return {
+                "load_performance": load_performance,
+                "error_rate": error_rate,
+                "tag_coverage": tag_coverage,
+                "issues": issues
+            }
+        except Exception as e:
+            logger.error(f"Failed to get health data for audit {audit_id}: {e}")
+            return {
+                "load_performance": "Unknown",
+                "error_rate": "Unknown",
+                "tag_coverage": "Unknown",
+                "issues": []
+            }
+
+    async def _get_cookies_data(self, audit_id: str) -> List[Dict[str, Any]]:
+        """Get cookie usage analysis data."""
+        try:
+            cookies = await self.export_repository.get_cookies(audit_id)
+            return [
+                {
+                    "name": cookie.name,
+                    "domain": cookie.domain,
+                    "category": cookie.category or "unknown",
+                    "max_age": cookie.max_age or 0,
+                    "privacy_impact": "high" if cookie.category == "marketing" else "medium" if cookie.category == "analytics" else "low"
+                }
+                for cookie in cookies
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get cookies data for audit {audit_id}: {e}")
+            return []
+
+    def _generate_privacy_summary(self, cookies_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate privacy compliance summary from cookie data."""
+        try:
+            total_cookies = len(cookies_data)
+            analytics_cookies = len([c for c in cookies_data if c.get("category") == "analytics"])
+            marketing_cookies = len([c for c in cookies_data if c.get("category") == "marketing"])
+            functional_cookies = len([c for c in cookies_data if c.get("category") == "functional"])
+
+            return {
+                "total_cookies": total_cookies,
+                "analytics_cookies": analytics_cookies,
+                "marketing_cookies": marketing_cookies,
+                "functional_cookies": functional_cookies
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate privacy summary: {e}")
+            return {}
+
+    async def populate_sample_export_data_for_testing(self, audit_id: str) -> None:
+        """Populate sample export data for testing purposes only.
+
+        This method creates mock export data that the UI can display.
+        Only use this for testing - in production, data should come from the audit runner.
+
+        Args:
+            audit_id: Audit identifier to populate data for
+        """
+        try:
+            # Only populate if we have an in-memory export repository
+            if hasattr(self.export_repository, '_tags') and hasattr(self.export_repository, '_cookies'):
+                # Populate sample tags data
+                from datetime import datetime, timezone, timedelta
+                sample_tags = [
+                    TagExport(
+                        audit_id=audit_id,
+                        page_url="https://example.com/",
+                        tag_id="ga4_001",
+                        vendor="Google Analytics 4",
+                        tag_type="pageview",
+                        implementation_method="gtm",
+                        detected_at=datetime.now(timezone.utc),
+                        confidence_score=0.95,
+                        detection_method="network_request_analysis",
+                        tracking_id="G-XXXXXXXXXX",
+                        parameters={"page_title": "Home Page", "currency": "USD"},
+                        load_order=1,
+                        load_time=250.0,
+                        blocking=False,
+                        uses_data_layer=True,
+                        data_layer_variables=["pageTitle", "currency"],
+                        collects_pii=False,
+                        consent_required=True,
+                        consent_status="granted",
+                        has_errors=False,
+                        validation_issues=None,
+                        privacy_scenario_detected=True,
+                        baseline_scenario_detected=True
+                    ),
+                    TagExport(
+                        audit_id=audit_id,
+                        page_url="https://example.com/checkout",
+                        tag_id="fb_001",
+                        vendor="Facebook Pixel",
+                        tag_type="event",
+                        implementation_method="script_tag",
+                        detected_at=datetime.now(timezone.utc),
+                        confidence_score=0.85,
+                        detection_method="script_tag_analysis",
+                        tracking_id="123456789",
+                        parameters={"event": "purchase", "value": 99.99},
+                        load_order=2,
+                        load_time=350.0,
+                        blocking=True,
+                        uses_data_layer=False,
+                        data_layer_variables=None,
+                        collects_pii=True,
+                        consent_required=True,
+                        consent_status="granted",
+                        has_errors=False,
+                        validation_issues=None,
+                        privacy_scenario_detected=True,
+                        baseline_scenario_detected=True
+                    )
+                ]
+
+                # Populate sample cookies data
+                sample_cookies = [
+                    CookieExport(
+                        audit_id=audit_id,
+                        page_url="https://example.com/",
+                        name="_ga",
+                        domain=".example.com",
+                        path="/",
+                        value="GA1.2.XXXXXXXXXX",
+                        http_only=False,
+                        secure=True,
+                        same_site="Lax",
+                        expires=datetime.now(timezone.utc) + timedelta(days=730),
+                        max_age=63072000,
+                        discovered_at=datetime.now(timezone.utc),
+                        source="javascript",
+                        category="analytics",
+                        vendor="Google Analytics",
+                        purpose="Analytics tracking",
+                        gdpr_compliance={"requires_consent": True, "purpose": "Analytics tracking"},
+                        is_essential=False,
+                        privacy_scenario_detected=True,
+                        baseline_scenario_detected=True
+                    ),
+                    CookieExport(
+                        audit_id=audit_id,
+                        page_url="https://example.com/",
+                        name="_fbp",
+                        domain=".example.com",
+                        path="/",
+                        value="fb.1.XXXXXXXXXX",
+                        http_only=False,
+                        secure=True,
+                        same_site="Lax",
+                        expires=datetime.now(timezone.utc) + timedelta(days=365),
+                        max_age=7776000,
+                        discovered_at=datetime.now(timezone.utc),
+                        source="javascript",
+                        category="marketing",
+                        vendor="Facebook",
+                        purpose="Marketing and advertising",
+                        gdpr_compliance={"requires_consent": True, "purpose": "Marketing and advertising"},
+                        is_essential=False,
+                        privacy_scenario_detected=True,
+                        baseline_scenario_detected=True
+                    )
+                ]
+
+                # Atomically check and store data to prevent race conditions
+                async with self.export_repository._lock:
+                    # Re-check existence inside the lock to prevent race conditions
+                    # Use key presence instead of truthiness to preserve legitimate empty results
+                    if audit_id in self.export_repository._tags or audit_id in self.export_repository._cookies:
+                        logger.info(f"Audit {audit_id} already has export data, skipping sample population")
+                        return
+
+                    # Safe to populate since we hold the lock and confirmed no existing data
+                    self.export_repository._tags[audit_id] = sample_tags
+                    self.export_repository._cookies[audit_id] = sample_cookies
+
+                logger.info(f"Populated sample export data for audit {audit_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to populate sample export data for audit {audit_id}: {e}")

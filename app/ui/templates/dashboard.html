@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Tag Sentinel{% endblock %}
+
+{% block page_actions %}
+<div class="page-actions">
+    <a href="/ui/runs" class="btn btn-primary" role="button">
+        View All Runs
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid">
+    <!-- Overview Cards -->
+    <section class="overview-section" aria-labelledby="overview-heading">
+        <h2 id="overview-heading">System Overview</h2>
+
+        <div class="cards-grid">
+            <div class="card" data-refresh="/audits/stats">
+                <div class="card-header">
+                    <h3 class="card-title">Recent Runs</h3>
+                    <span class="card-subtitle">Last 24 hours</span>
+                </div>
+                <div class="metric-value" data-update-text aria-live="polite">
+                    <span class="loading-placeholder">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card" data-refresh="/audits/stats">
+                <div class="card-header">
+                    <h3 class="card-title">Success Rate</h3>
+                    <span class="card-subtitle">Last 7 days</span>
+                </div>
+                <div class="metric-value" data-update-text aria-live="polite">
+                    <span class="loading-placeholder">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card" data-refresh="/health">
+                <div class="card-header">
+                    <h3 class="card-title">System Health</h3>
+                    <span class="card-subtitle">Current status</span>
+                </div>
+                <div class="metric-value" data-update-text aria-live="polite">
+                    <span class="badge badge-success">Healthy</span>
+                </div>
+            </div>
+
+            <div class="card" data-refresh="/audits/stats">
+                <div class="card-header">
+                    <h3 class="card-title">Issues Found</h3>
+                    <span class="card-subtitle">Needs attention</span>
+                </div>
+                <div class="metric-value" data-update-text aria-live="polite">
+                    <span class="loading-placeholder">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Recent Activity -->
+    <section class="activity-section" aria-labelledby="activity-heading">
+        <h2 id="activity-heading">Recent Activity</h2>
+
+        <div class="card">
+            <div class="table-container">
+                <table class="table" role="table" aria-label="Recent audit runs">
+                    <caption class="sr-only">Recent audit runs with status and details</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" data-sortable>Site</th>
+                            <th scope="col" data-sortable>Environment</th>
+                            <th scope="col" data-sortable>Status</th>
+                            <th scope="col" data-sortable>Started</th>
+                            <th scope="col" data-sortable>Pages</th>
+                            <th scope="col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody data-refresh="/api/audits" data-update-html>
+                        <!-- Loading state -->
+                        <tr>
+                            <td colspan="6" class="loading-container">
+                                <div class="spinner" aria-hidden="true"></div>
+                                <span>Loading recent runs...</span>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Actions -->
+    <section class="actions-section" aria-labelledby="actions-heading">
+        <h2 id="actions-heading">Quick Actions</h2>
+
+        <div class="quick-actions">
+            <a href="/ui/runs" class="action-card" role="button">
+                <div class="action-icon" aria-hidden="true">📊</div>
+                <h3>View All Runs</h3>
+                <p>Browse complete audit history</p>
+            </a>
+
+            <a href="/ui/health" class="action-card" role="button">
+                <div class="action-icon" aria-hidden="true">🏥</div>
+                <h3>System Health</h3>
+                <p>Check system status and performance</p>
+            </a>
+
+            <a href="/docs" class="action-card" role="button">
+                <div class="action-icon" aria-hidden="true">📖</div>
+                <h3>API Documentation</h3>
+                <p>Explore API endpoints and schemas</p>
+            </a>
+
+            <a href="https://github.com/your-org/tag-sentinel"
+               class="action-card"
+               role="button"
+               target="_blank"
+               rel="noopener noreferrer">
+                <div class="action-icon" aria-hidden="true">💻</div>
+                <h3>GitHub Repository</h3>
+                <p>Source code and documentation</p>
+            </a>
+        </div>
+    </section>
+</div>
+
+<style>
+.dashboard-grid {
+    display: grid;
+    gap: 2rem;
+}
+
+.cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 600;
+    color: #1a73e8;
+}
+
+.loading-placeholder {
+    font-size: 1rem;
+    color: #6c757d;
+    font-weight: normal;
+}
+
+.quick-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.action-card {
+    display: block;
+    padding: 1.5rem;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    text-decoration: none;
+    color: #1a1a1a;
+    background: white;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.action-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+    color: #1a1a1a;
+}
+
+.action-card:focus {
+    outline: 2px solid #1a73e8;
+    outline-offset: 2px;
+}
+
+.action-icon {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+}
+
+.action-card h3 {
+    font-size: 1.125rem;
+    margin-bottom: 0.5rem;
+    color: #1a73e8;
+}
+
+.action-card p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+@media (max-width: 768px) {
+    .cards-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .quick-actions {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Dashboard-specific JavaScript
+document.addEventListener('DOMContentLoaded', function() {
+    // Load dashboard data
+    loadDashboardData();
+
+    // Set up auto-refresh
+    setInterval(loadDashboardData, 30000); // 30 seconds
+});
+
+async function loadDashboardData() {
+    try {
+        // Load recent runs
+        const runs = await window.TagSentinel.api.getRuns({ limit: 5 });
+        updateRecentRunsTable(runs);
+
+        // Load stats
+        // Note: This would be implemented when the stats endpoint is available
+        // const stats = await window.TagSentinel.api.request('/audits/stats');
+        // updateStatsCards(stats);
+
+    } catch (error) {
+        console.error('Failed to load dashboard data:', error);
+        showLoadingError();
+    }
+}
+
+function updateRecentRunsTable(data) {
+    const tbody = document.querySelector('[data-refresh="/api/audits"]');
+    if (!tbody || !data.audits) return;
+
+    tbody.innerHTML = data.audits.map(run => `
+        <tr>
+            <td>${escapeHtml(run.site_id || 'Unknown')}</td>
+            <td>${escapeHtml(run.env || 'production')}</td>
+            <td>
+                <span class="badge badge-${getStatusClass(run.status)}">
+                    ${escapeHtml(run.status || 'unknown')}
+                </span>
+            </td>
+            <td>${formatDate(run.started_at || run.created_at)}</td>
+            <td>${run.summary?.pages_processed ?? 0}</td>
+            <td>
+                <a href="/ui/runs/${run.id}" class="btn btn-secondary btn-sm">
+                    View Details
+                </a>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function getStatusClass(status) {
+    const statusMap = {
+        'completed': 'success',
+        'running': 'primary',
+        'failed': 'danger',
+        'queued': 'secondary'
+    };
+    return statusMap[status] || 'secondary';
+}
+
+function showLoadingError() {
+    const tbody = document.querySelector('[data-refresh="/api/audits"]');
+    if (tbody) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="empty-state">
+                    <div class="empty-state-icon">⚠️</div>
+                    <h3 class="empty-state-title">Unable to load data</h3>
+                    <p class="empty-state-text">Please check your connection and try again.</p>
+                    <button onclick="loadDashboardData()" class="btn btn-primary">
+                        Retry
+                    </button>
+                </div>
+            </td>
+        </tr>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'Unknown';
+    return new Date(dateString).toLocaleString();
+}
+</script>
+{% endblock %}

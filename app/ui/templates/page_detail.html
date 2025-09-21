@@ -1,0 +1,566 @@
+{% extends "base.html" %}
+
+{% block title %}Page Detail - Tag Sentinel{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol class="breadcrumb-list">
+        <li class="breadcrumb-item">
+            <a href="/ui/" class="breadcrumb-link">Dashboard</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="/ui/runs" class="breadcrumb-link">Audit Runs</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="/ui/runs/{{ run_id }}" class="breadcrumb-link">Run {{ run_id }}</a>
+        </li>
+        <li class="breadcrumb-item" aria-current="page">Page Detail</li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block page_actions %}
+<div class="page-actions">
+    <button class="btn btn-secondary" id="export-page-btn">
+        Export Page Data
+    </button>
+    <button class="btn btn-secondary" id="view-artifacts-btn">
+        View Artifacts
+    </button>
+    <button class="btn btn-secondary" id="refresh-btn">
+        Refresh
+    </button>
+    <a href="/ui/runs/{{ run_id }}" class="btn btn-secondary">
+        Back to Run
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Page Overview -->
+<section class="page-overview" aria-labelledby="page-overview-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="page-overview-heading">Page Overview</h2>
+        </div>
+        <div class="page-info" id="page-info">
+            <!-- Populated by JavaScript -->
+            <div class="loading-container">
+                <div class="spinner" aria-hidden="true"></div>
+                <span>Loading page details...</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Request Timeline -->
+<section class="timeline-section" aria-labelledby="timeline-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="timeline-heading">Request Timeline</h2>
+            <div class="timeline-controls">
+                <div class="timeline-filters">
+                    <select id="timeline-filter" class="form-control" aria-label="Filter timeline requests">
+                        <option value="">All Requests</option>
+                        <option value="analytics">Analytics</option>
+                        <option value="marketing">Marketing</option>
+                        <option value="images">Images</option>
+                        <option value="scripts">Scripts</option>
+                        <option value="xhr">XHR/Fetch</option>
+                    </select>
+                    <input type="search"
+                           id="timeline-search"
+                           class="form-control"
+                           placeholder="Search requests..."
+                           aria-label="Search timeline requests">
+                </div>
+                <div class="timeline-zoom">
+                    <button class="btn btn-secondary btn-sm" id="zoom-in-btn" title="Zoom in">+</button>
+                    <button class="btn btn-secondary btn-sm" id="zoom-out-btn" title="Zoom out">−</button>
+                    <button class="btn btn-secondary btn-sm" id="zoom-reset-btn" title="Reset zoom">⌂</button>
+                </div>
+            </div>
+        </div>
+        <div class="timeline-container" id="timeline-container">
+            <div class="timeline-ruler" id="timeline-ruler" aria-hidden="true">
+                <!-- Time markers populated by JavaScript -->
+            </div>
+            <div class="timeline-content" id="timeline-content" role="table" aria-label="Request timeline">
+                <!-- Timeline items populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Tag Detections -->
+<section class="detections-section" aria-labelledby="detections-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="detections-heading">Tag Detections</h2>
+        </div>
+        <div class="table-container">
+            <table class="table" role="table" aria-label="Tag detections">
+                <caption class="sr-only">List of detected analytics tags with confidence and parameters</caption>
+                <thead>
+                    <tr>
+                        <th scope="col" data-sortable>Vendor</th>
+                        <th scope="col" data-sortable>Tag Type</th>
+                        <th scope="col" data-sortable>Measurement ID</th>
+                        <th scope="col" data-sortable>Confidence</th>
+                        <th scope="col" data-sortable>Events</th>
+                        <th scope="col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="detections-tbody">
+                    <!-- Populated by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- Data Layer -->
+<section class="datalayer-section" aria-labelledby="datalayer-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="datalayer-heading">Data Layer Snapshot</h2>
+            <div class="datalayer-controls">
+                <button class="btn btn-secondary btn-sm" id="expand-all-btn">Expand All</button>
+                <button class="btn btn-secondary btn-sm" id="collapse-all-btn">Collapse All</button>
+                <button class="btn btn-secondary btn-sm" id="validate-schema-btn">Validate Schema</button>
+            </div>
+        </div>
+        <div class="datalayer-content">
+            <div class="datalayer-summary" id="datalayer-summary">
+                <!-- Summary stats -->
+            </div>
+            <div class="datalayer-viewer" id="datalayer-viewer">
+                <!-- JSON viewer populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Cookies -->
+<section class="cookies-section" aria-labelledby="cookies-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="cookies-heading">Cookies</h2>
+            <div class="cookies-filters">
+                <select id="cookies-filter" class="form-control" aria-label="Filter cookies by category">
+                    <option value="">All Categories</option>
+                    <option value="essential">Essential</option>
+                    <option value="analytics">Analytics</option>
+                    <option value="marketing">Marketing</option>
+                    <option value="functional">Functional</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-container">
+            <table class="table" role="table" aria-label="Cookies list">
+                <caption class="sr-only">List of cookies set by this page with privacy information</caption>
+                <thead>
+                    <tr>
+                        <th scope="col" data-sortable>Name</th>
+                        <th scope="col" data-sortable>Domain</th>
+                        <th scope="col" data-sortable>Category</th>
+                        <th scope="col" data-sortable>Duration</th>
+                        <th scope="col" data-sortable>Size</th>
+                        <th scope="col">Privacy Impact</th>
+                    </tr>
+                </thead>
+                <tbody id="cookies-tbody">
+                    <!-- Populated by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- Console Errors -->
+<section class="console-section" aria-labelledby="console-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="console-heading">Console Errors & Warnings</h2>
+            <div class="console-filters">
+                <select id="console-filter" class="form-control" aria-label="Filter console messages by level">
+                    <option value="">All Levels</option>
+                    <option value="error">Errors</option>
+                    <option value="warning">Warnings</option>
+                    <option value="info">Info</option>
+                </select>
+            </div>
+        </div>
+        <div class="console-content" id="console-content">
+            <!-- Console messages populated by JavaScript -->
+        </div>
+    </div>
+</section>
+
+<!-- Artifacts -->
+<section class="artifacts-section" aria-labelledby="artifacts-heading">
+    <div class="card">
+        <div class="card-header">
+            <h2 id="artifacts-heading">Debug Artifacts</h2>
+        </div>
+        <div class="artifacts-grid" id="artifacts-grid">
+            <!-- Artifacts populated by JavaScript -->
+        </div>
+    </div>
+</section>
+
+<!-- Request Detail Modal -->
+<div class="modal" id="request-modal" aria-hidden="true" role="dialog" aria-labelledby="request-modal-title">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h3 id="request-modal-title" class="modal-title">Request Details</h3>
+            <button class="modal-close" aria-label="Close modal" data-modal-close>×</button>
+        </div>
+        <div class="modal-body" id="request-modal-body">
+            <!-- Request details populated by JavaScript -->
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-modal-close>Close</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.page-info {
+    padding: 1.5rem;
+}
+
+.page-details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.page-detail-item {
+    text-align: center;
+}
+
+.page-detail-label {
+    display: block;
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.page-detail-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.page-url {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    word-break: break-all;
+    font-family: monospace;
+    font-size: 0.875rem;
+}
+
+/* Timeline Styles */
+.timeline-controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.timeline-filters {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.timeline-zoom {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.timeline-container {
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: white;
+    min-height: 400px;
+}
+
+.timeline-ruler {
+    height: 30px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    position: relative;
+    overflow: hidden;
+}
+
+.timeline-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid #ced4da;
+    color: #6c757d;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    white-space: nowrap;
+}
+
+.timeline-content {
+    padding: 1rem;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 500px;
+}
+
+.timeline-row {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f8f9fa;
+    position: relative;
+    min-height: 40px;
+}
+
+.timeline-row:hover {
+    background: #f8f9fa;
+}
+
+.timeline-bar {
+    height: 20px;
+    border-radius: 3px;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.timeline-bar:hover {
+    transform: scaleY(1.2);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.timeline-bar.analytics { background: #1a73e8; }
+.timeline-bar.marketing { background: #f39c12; }
+.timeline-bar.images { background: #27ae60; }
+.timeline-bar.scripts { background: #9b59b6; }
+.timeline-bar.xhr { background: #e74c3c; }
+.timeline-bar.other { background: #95a5a6; }
+
+.timeline-label {
+    flex: 0 0 200px;
+    font-size: 0.875rem;
+    color: #495057;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 1rem;
+}
+
+.timeline-info {
+    flex: 0 0 100px;
+    font-size: 0.75rem;
+    color: #6c757d;
+    text-align: right;
+}
+
+/* Data Layer Styles */
+.datalayer-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.datalayer-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+}
+
+.datalayer-stat {
+    text-align: center;
+}
+
+.datalayer-stat-label {
+    display: block;
+    font-size: 0.75rem;
+    color: #6c757d;
+    margin-bottom: 0.25rem;
+}
+
+.datalayer-stat-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #1a73e8;
+}
+
+.datalayer-viewer {
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+.json-viewer {
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: #495057;
+}
+
+.json-key {
+    color: #0066cc;
+    font-weight: 600;
+}
+
+.json-string {
+    color: #22863a;
+}
+
+.json-number {
+    color: #005cc5;
+}
+
+.json-boolean {
+    color: #d73a49;
+}
+
+.json-null {
+    color: #6f42c1;
+}
+
+.json-expandable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.json-expandable:hover {
+    background: rgba(26, 115, 232, 0.1);
+    border-radius: 2px;
+}
+
+/* Console Styles */
+.console-content {
+    max-height: 400px;
+    overflow-y: auto;
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+}
+
+.console-message {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e9ecef;
+    font-family: monospace;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+.console-message.error {
+    background: #fdf2f2;
+    border-left: 4px solid #dc3545;
+    color: #721c24;
+}
+
+.console-message.warning {
+    background: #fffbf0;
+    border-left: 4px solid #ffc107;
+    color: #856404;
+}
+
+.console-message.info {
+    background: #f0f8ff;
+    border-left: 4px solid #17a2b8;
+    color: #0c5460;
+}
+
+.console-timestamp {
+    color: #6c757d;
+    font-size: 0.75rem;
+    margin-right: 0.5rem;
+}
+
+.console-source {
+    color: #6c757d;
+    font-size: 0.75rem;
+    float: right;
+}
+
+/* Artifacts Styles */
+.artifacts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.artifact-card {
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    text-align: center;
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.artifact-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.artifact-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    color: #1a73e8;
+}
+
+.artifact-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #1a1a1a;
+}
+
+.artifact-size {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 1rem;
+}
+
+.artifact-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+@media (max-width: 768px) {
+    .timeline-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .timeline-filters {
+        flex-direction: column;
+    }
+
+    .datalayer-controls {
+        flex-direction: column;
+    }
+
+    .page-details-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .artifacts-grid {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/ui/static/js/page-detail.js"></script>
+{% endblock %}
