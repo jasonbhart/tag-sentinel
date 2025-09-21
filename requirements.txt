@@ -31,6 +31,11 @@ pybloom-live>=3.0.0,<4.0.0
 # Database support
 sqlalchemy>=2.0.0,<3.0.0
 alembic>=1.13.0,<2.0.0
+psycopg[binary,pool]>=3.1.0,<4.0.0  # PostgreSQL driver with async support
+
+# Object storage support
+boto3>=1.34.0,<2.0.0  # AWS S3 and compatible object stores
+aiobotocore>=2.8.0,<3.0.0  # Async AWS SDK support
 
 # Authentication support
 PyJWT>=2.8.0,<3.0.0

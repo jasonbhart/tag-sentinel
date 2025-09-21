@@ -20,6 +20,7 @@ from pathlib import Path
 
 from app.api.schemas import ErrorResponse, HealthResponse
 from app.api.routes import audits_router, exports_router, artifacts_router
+from app.api.persistence import router as persistence_router
 from app.ui import ui_router
 
 
@@ -298,6 +299,7 @@ def create_app() -> FastAPI:
     app.include_router(audits_router, prefix="/api")
     app.include_router(exports_router, prefix="/api")
     app.include_router(artifacts_router, prefix="/api")
+    app.include_router(persistence_router)
 
     # Include UI router
     app.include_router(ui_router)
